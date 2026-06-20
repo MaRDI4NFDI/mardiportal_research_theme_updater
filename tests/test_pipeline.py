@@ -56,6 +56,24 @@ def test_harvest_step_dry_run_does_not_import():
     assert count == 1 and kg.imported == []
 
 
+def test_harvest_step_isolates_failing_paper():
+    cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    state = State()
+    kg = FakeKG()
+
+    def fake_fetch(from_date, set_spec): return iter([P1, P2])
+    def fake_classify(paper, topics, *, model, api_key):
+        if paper.arxiv_id == "2401.00001":
+            return ["Q11"]
+        raise RuntimeError("classify exploded")
+
+    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+                                  fetch=fake_fetch, classify=fake_classify)
+    assert count == 1
+    assert "2401.00001" in state.seen_ids
+    assert "2401.00002" in state.seen_ids
+
+
 def test_generate_pages_step_publishes_topic_and_index():
     cfg = load_config({})
     published = []

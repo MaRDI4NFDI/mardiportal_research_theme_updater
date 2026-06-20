@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 
 from .config import load_config
@@ -22,7 +23,7 @@ def main() -> None:
 
     config = load_config()
     if args.dry_run:
-        object.__setattr__(config, "dry_run", True)  # frozen dataclass override
+        config = dataclasses.replace(config, dry_run=True)
 
     state = load_state(config.state_path)
     topics = load_registered_topics(config.sparql_endpoint_url, config.overview_topic_qid)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 
 from .config import Config
 from .state import State
@@ -12,6 +13,8 @@ from .llm.topic_classifier import classify_paper
 from .wiki.page_builder import (
     build_topic_page, build_index_page, TOPIC_PAGE_PREFIX, INDEX_PAGE_TITLE,
 )
+
+log = logging.getLogger(__name__)
 
 
 def harvest_step(
@@ -28,14 +31,18 @@ def harvest_step(
         if record.arxiv_id in state.seen_ids:
             continue
         state.seen_ids.add(record.arxiv_id)
-        matched = classify(
-            record, topics, model=config.model, api_key=config.anthropic_api_key
-        )
-        if not matched:
+        try:
+            matched = classify(
+                record, topics, model=config.model, api_key=config.anthropic_api_key
+            )
+            if not matched:
+                continue
+            if not config.dry_run:
+                kg.import_paper(record, matched)
+            imported += 1
+        except Exception as exc:
+            log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
             continue
-        if not config.dry_run:
-            kg.import_paper(record, matched)
-        imported += 1
     state.last_harvest = datetime.date.today().isoformat()
     return imported
 
