@@ -4,7 +4,6 @@ from topic_overviews.config import load_config
 from topic_overviews.state import State
 from topic_overviews.harvest.arxiv_oai import PaperRecord
 from topic_overviews.kg.topics import Topic
-from topic_overviews.kg.pagedata import TopicPageData, PaperEntry
 from topic_overviews import pipeline
 
 TOPICS = [Topic(qid="Q11", label="Online Algorithms", description="...")]
@@ -81,35 +80,35 @@ def test_harvest_step_isolates_failing_paper():
     assert "2401.00002" in state.seen_ids
 
 
-def test_generate_pages_step_publishes_topic_and_index():
+class FakePublisher:
+    def __init__(self):
+        self.ensured = []
+        self.edited = []
+
+    def ensure_page(self, title, text, summary):
+        self.ensured.append((title, text))
+        return True
+
+    def edit(self, title, text, summary):
+        self.edited.append(title)
+
+
+def test_generate_pages_step_ensures_theme_stub_pages_and_index():
     cfg = load_config({})
-    published = []
+    pub = FakePublisher()
+    result = pipeline.generate_pages_step(cfg, topics=TOPICS, publisher=pub)
 
-    class FakePublisher:
-        def edit(self, title, text, summary): published.append(title)
-
-    def fake_page_data(endpoint, topic):
-        return TopicPageData(topic.qid, topic.label, topic.description,
-                             [PaperEntry("Caching", ["Jane Doe"], "2024", "2401.00001")])
-
-    result = pipeline.generate_pages_step(cfg, topics=TOPICS, publisher=FakePublisher(),
-                                          fetch_page_data=fake_page_data)
-    assert [d.label for d in result] == ["Online Algorithms"]
-    assert published == ["Topic:Online Algorithms", "Topic overview"]
+    assert result == ["Online Algorithms"]
+    # the theme page is created with just the template stub (not a built table)
+    assert pub.ensured == [("Online Algorithms", "{{ResearchTheme}}\n")]
+    # the master index is (over)written
+    assert pub.edited == ["Research themes"]
 
 
-def test_generate_pages_step_dry_run_does_not_publish():
+def test_generate_pages_step_dry_run_writes_nothing():
     cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "true"})
-    published = []
-
-    class FakePublisher:
-        def edit(self, title, text, summary): published.append(title)
-
-    def fake_page_data(endpoint, topic):
-        return TopicPageData(topic.qid, topic.label, topic.description,
-                             [PaperEntry("Caching", ["Jane Doe"], "2024", "2401.00001")])
-
-    result = pipeline.generate_pages_step(cfg, topics=TOPICS, publisher=FakePublisher(),
-                                          fetch_page_data=fake_page_data)
-    assert [d.label for d in result] == ["Online Algorithms"]
-    assert published == []
+    pub = FakePublisher()
+    result = pipeline.generate_pages_step(cfg, topics=TOPICS, publisher=pub)
+    assert result == ["Online Algorithms"]
+    assert pub.ensured == []
+    assert pub.edited == []

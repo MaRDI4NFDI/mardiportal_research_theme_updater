@@ -1,31 +1,26 @@
-"""Render topic overview pages and the index as MediaWiki wikitext (pure)."""
+"""Wiki pages the pipeline manages for research themes.
+
+Theme pages render **live** via ``Template:ResearchTheme`` (which queries the
+KG over SPARQL through ``Module:ResearchThemePublications``), so the pipeline
+does not build paper tables in Python. It only ensures each theme's page holds
+the template stub, and maintains a master index linking the theme pages.
+
+A theme's wiki page lives in the main namespace, titled by the theme label —
+the same convention as ``Person`` profile pages (e.g. ``Erion Hasanbelliu``).
+"""
 from __future__ import annotations
 
-from ..kg.pagedata import TopicPageData
+from ..kg.topics import Topic
 
-TOPIC_PAGE_PREFIX = "Topic:"
-INDEX_PAGE_TITLE = "Topic overview"
+# The entire content of a theme page: the template renders everything live.
+RESEARCH_THEME_STUB = "{{ResearchTheme}}\n"
 
-
-def build_topic_page(data: TopicPageData) -> str:
-    lines = [
-        f"= {data.label} =",
-        "",
-        data.description,
-        "",
-        '{| class="wikitable sortable"',
-        "! Title !! Authors !! Year !! arXiv",
-    ]
-    for p in data.papers:
-        link = f"[https://arxiv.org/abs/{p.arxiv_id} {p.arxiv_id}]" if p.arxiv_id else ""
-        lines.append("|-")
-        lines.append(f"| {p.title} || {'; '.join(p.authors)} || {p.year} || {link}")
-    lines.append("|}")
-    return "\n".join(lines) + "\n"
+# Title of the master index page listing all research themes.
+INDEX_PAGE_TITLE = "Research themes"
 
 
-def build_index_page(topics: list[TopicPageData]) -> str:
+def build_index_page(themes: list[Topic]) -> str:
     lines = [f"= {INDEX_PAGE_TITLE} =", ""]
-    for t in topics:
-        lines.append(f"* [[{TOPIC_PAGE_PREFIX}{t.label}|{t.label}]] ({len(t.papers)} papers)")
+    for t in themes:
+        lines.append(f"* [[{t.label}]]")
     return "\n".join(lines) + "\n"

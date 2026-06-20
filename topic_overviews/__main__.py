@@ -36,7 +36,7 @@ def main() -> None:
 
     publisher = None if config.dry_run else _make_publisher(config)
     pages = pipeline.generate_pages_step(config, topics=topics, publisher=publisher)
-    log.info("Generated %d topic pages", len(pages))
+    log.info("Ensured %d research theme pages", len(pages))
 
 
 def _make_publisher(config) -> WikiPublisher:

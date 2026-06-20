@@ -8,11 +8,8 @@ from .config import Config
 from .state import State
 from .harvest.arxiv_oai import fetch_records
 from .kg.topics import Topic
-from .kg.pagedata import TopicPageData, fetch_topic_page_data
 from .llm.topic_classifier import classify_paper
-from .wiki.page_builder import (
-    build_topic_page, build_index_page, TOPIC_PAGE_PREFIX, INDEX_PAGE_TITLE,
-)
+from .wiki.page_builder import build_index_page, RESEARCH_THEME_STUB, INDEX_PAGE_TITLE
 
 log = logging.getLogger(__name__)
 
@@ -54,17 +51,20 @@ def generate_pages_step(
     *,
     topics: list[Topic],
     publisher,
-    fetch_page_data=fetch_topic_page_data,
-) -> list[TopicPageData]:
-    page_data: list[TopicPageData] = []
-    for topic in topics:
-        data = fetch_page_data(config.sparql_endpoint_url, topic)
-        page_data.append(data)
-        if not config.dry_run:
-            publisher.edit(
-                f"{TOPIC_PAGE_PREFIX}{topic.label}", build_topic_page(data),
-                "Update topic overview",
-            )
+) -> list[str]:
+    """Ensure each research theme has a ``{{ResearchTheme}}`` page, and refresh
+    the master index. Theme pages render live via the template, so nothing is
+    built here — the page is created only if missing (curator edits are kept).
+
+    Returns the theme page titles processed.
+    """
+    titles = [topic.label for topic in topics]
     if not config.dry_run:
-        publisher.edit(INDEX_PAGE_TITLE, build_index_page(page_data), "Update topic index")
-    return page_data
+        for topic in topics:
+            publisher.ensure_page(
+                topic.label, RESEARCH_THEME_STUB, "Create research theme page"
+            )
+        publisher.edit(
+            INDEX_PAGE_TITLE, build_index_page(topics), "Update research theme index"
+        )
+    return titles
