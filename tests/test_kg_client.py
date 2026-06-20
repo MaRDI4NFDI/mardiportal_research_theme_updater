@@ -79,18 +79,18 @@ def test_import_new_paper_writes_only_paper_statements():
     qid = KGClient(mc).import_paper(PAPER)
 
     assert qid == "Q500"
-    assert mc.searched == [("wdt:P21", "2401.00001")]
+    assert mc.searched == [("P21", "2401.00001")]
     assert item.label == ("en", "A New Bound for Online Caching")
-    assert ("wdt:P31", "wd:Q56887") in item.claims          # instance of scholarly article
-    assert ("wdt:P21", "2401.00001") in item.claims         # arXiv id
-    assert ("wdt:P27", "10.1000/xyz") in item.claims        # DOI
-    assert ("wdt:P159", "A New Bound for Online Caching") in item.claims
-    assert ("wdt:P28", "+2024-01-02T00:00:00Z") in item.claims
-    assert ("wdt:P22", "math.OC") in item.claims
-    assert ("wdt:P43", "Jane Doe") in item.claims
+    assert ("P31", "Q56887") in item.claims          # instance of scholarly article
+    assert ("P21", "2401.00001") in item.claims         # arXiv id
+    assert ("P27", "10.1000/xyz") in item.claims        # DOI
+    assert ("P159", "A New Bound for Online Caching") in item.claims
+    assert ("P28", "+2024-01-02T00:00:00Z") in item.claims
+    assert ("P22", "math.OC") in item.claims
+    assert ("P43", "Jane Doe") in item.claims
     # The paper carries NO topic/membership statement — papers stay topic-agnostic.
-    assert not any(prop == "wdt:P265" for prop, _ in item.claims)
-    assert not any(prop == "wdt:P30" for prop, _ in item.claims)
+    assert not any(prop == "P265" for prop, _ in item.claims)
+    assert not any(prop == "P30" for prop, _ in item.claims)
 
 
 def test_import_existing_paper_reuses_item():
@@ -100,19 +100,19 @@ def test_import_existing_paper_reuses_item():
     assert qid == "Q500"
     # existing item fetched, not newly labelled
     assert item.label is None
-    assert ("wdt:P31", "wd:Q56887") in item.claims      # claims still written on existing item
+    assert ("P31", "Q56887") in item.claims      # claims still written on existing item
 
 
 def test_link_topic_adds_paper_to_topic_when_absent():
     topic = FakeItem(item_id="Q11")
     mc = FakeMC(item=topic)
     KGClient(mc).link_topic("Q11", "Q500")
-    assert ("wdt:P265", "wd:Q500") in topic.claims      # has part(s) -> paper, on the TOPIC item
+    assert ("P265", "Q500") in topic.claims      # has part(s) -> paper, on the TOPIC item
     assert topic.written is True
 
 
 def test_link_topic_is_idempotent_when_paper_already_listed():
-    topic = FakeItem(item_id="Q11", values={"wdt:P265": ["Q500", "Q777"]})
+    topic = FakeItem(item_id="Q11", values={"P265": ["Q500", "Q777"]})
     mc = FakeMC(item=topic)
     KGClient(mc).link_topic("Q11", "Q500")
     assert topic.claims == []        # nothing added

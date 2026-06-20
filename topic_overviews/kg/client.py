@@ -23,24 +23,27 @@ class KGClient:
 
         Writes only paper-intrinsic statements; nothing about topics.
         """
-        existing = self.mc.search_entity_by_value(f"wdt:{M.P_ARXIV_ID}", record.arxiv_id)
+        # NOTE: use BARE local MaRDI PIDs/QIDs. A "wdt:"/"wd:" prefix makes
+        # mardiclient interpret the id as a *Wikidata* one and remote-map it,
+        # which both picks the wrong property and 404s. Our model.py ids are local.
+        existing = self.mc.search_entity_by_value(M.P_ARXIV_ID, record.arxiv_id)
         if existing:
             item = self.mc.item.get(entity_id=existing[0])
         else:
             item = self.mc.item.new()
             item.labels.set("en", record.title[:250])
 
-        item.add_claim(f"wdt:{M.P_INSTANCE_OF}", value=f"wd:{M.Q_SCHOLARLY_ARTICLE}")
-        item.add_claim(f"wdt:{M.P_ARXIV_ID}", value=record.arxiv_id)
+        item.add_claim(M.P_INSTANCE_OF, value=M.Q_SCHOLARLY_ARTICLE)
+        item.add_claim(M.P_ARXIV_ID, value=record.arxiv_id)
         if record.doi:
-            item.add_claim(f"wdt:{M.P_DOI}", value=record.doi)
-        item.add_claim(f"wdt:{M.P_TITLE}", value=record.title)
+            item.add_claim(M.P_DOI, value=record.doi)
+        item.add_claim(M.P_TITLE, value=record.title)
         if record.published:
-            item.add_claim(f"wdt:{M.P_PUBLICATION_DATE}", value=to_wbi_time(record.published))
+            item.add_claim(M.P_PUBLICATION_DATE, value=to_wbi_time(record.published))
         for cat in record.categories:
-            item.add_claim(f"wdt:{M.P_ARXIV_CLASSIFICATION}", value=cat)
+            item.add_claim(M.P_ARXIV_CLASSIFICATION, value=cat)
         for name in record.authors:
-            item.add_claim(f"wdt:{M.P_AUTHOR_NAME_STRING}", value=name)
+            item.add_claim(M.P_AUTHOR_NAME_STRING, value=name)
 
         return item.write().id
 
@@ -51,10 +54,10 @@ class KGClient:
         is not already listed, so re-runs never duplicate entries.
         """
         topic_item = self.mc.item.get(entity_id=topic_qid)
-        current = topic_item.get_value(f"wdt:{M.P_HAS_PART}") or []
+        current = topic_item.get_value(M.P_HAS_PART) or []
         if paper_qid in current:
             return
-        topic_item.add_claim(f"wdt:{M.P_HAS_PART}", value=f"wd:{paper_qid}")
+        topic_item.add_claim(M.P_HAS_PART, value=paper_qid)
         topic_item.write()
 
     def get_theme_sitelink(self, theme_qid: str) -> str | None:
