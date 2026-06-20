@@ -35,7 +35,9 @@ def main() -> None:
     save_state(config.state_path, state)
 
     publisher = None if config.dry_run else _make_publisher(config)
-    pages = pipeline.generate_pages_step(config, topics=topics, publisher=publisher)
+    pages = pipeline.ensure_theme_pages_step(
+        config, topics=topics, publisher=publisher, kg=kg
+    )
     log.info("Ensured %d research theme pages", len(pages))
 
 

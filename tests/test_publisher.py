@@ -43,22 +43,13 @@ def test_login_then_edit_posts_text_with_token():
     assert edit_data["summary"] == "update"
 
 
-def test_ensure_page_creates_only_when_missing():
-    # page is missing -> ensure_page edits (create); csrf token + edit follow the query
-    missing = FakeSession([
-        {"query": {"pages": {"-1": {"missing": ""}}}},   # GET page info: missing
-        {"query": {"tokens": {"csrftoken": "CT"}}},       # GET csrf token
-        {"edit": {"result": "Success"}},                  # POST edit
-    ])
-    pub = WikiPublisher("http://api", "bot", "pw", session=missing)
-    assert pub.ensure_page("My Theme", "{{ResearchTheme}}\n", "create") is True
-    assert any(c[0] == "POST" for c in missing.calls)     # an edit happened
-
-
-def test_ensure_page_skips_when_present():
+def test_page_exists_true_and_false():
     present = FakeSession([
-        {"query": {"pages": {"42": {"pageid": 42, "title": "My Theme"}}}},  # GET: exists
+        {"query": {"pages": {"42": {"pageid": 42, "title": "My Theme"}}}},  # exists
     ])
-    pub = WikiPublisher("http://api", "bot", "pw", session=present)
-    assert pub.ensure_page("My Theme", "{{ResearchTheme}}\n", "create") is False
-    assert all(c[0] == "GET" for c in present.calls)       # no POST/edit attempted
+    assert WikiPublisher("http://api", "bot", "pw", session=present).page_exists("My Theme") is True
+
+    missing = FakeSession([
+        {"query": {"pages": {"-1": {"missing": ""}}}},                      # absent
+    ])
+    assert WikiPublisher("http://api", "bot", "pw", session=missing).page_exists("Nope") is False

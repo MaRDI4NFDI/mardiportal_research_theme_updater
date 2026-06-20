@@ -46,25 +46,44 @@ def harvest_step(
     return imported
 
 
-def generate_pages_step(
+def ensure_theme_pages_step(
     config: Config,
     *,
     topics: list[Topic],
     publisher,
+    kg,
 ) -> list[str]:
-    """Ensure each research theme has a ``{{ResearchTheme}}`` page, and refresh
-    the master index. Theme pages render live via the template, so nothing is
-    built here — the page is created only if missing (curator edits are kept).
+    """Make every research theme renderable: ensure each has a ``{{ResearchTheme}}``
+    wiki page connected to its item via the ``mardi`` sitelink. Refresh the index.
 
-    Returns the theme page titles processed.
+    Per theme:
+      - already has a sitelink -> leave it (page is wired; curator owns content);
+      - else if a page with the target title already exists -> log and skip (do
+        not hijack an unrelated page);
+      - else -> create the stub page and set the item's sitelink to it.
+
+    The page title is the theme label (main namespace, Person convention).
+    Returns the theme labels processed.
     """
     titles = [topic.label for topic in topics]
-    if not config.dry_run:
-        for topic in topics:
-            publisher.ensure_page(
-                topic.label, RESEARCH_THEME_STUB, "Create research theme page"
+    if config.dry_run:
+        return titles
+
+    for topic in topics:
+        if kg.get_theme_sitelink(topic.qid):
+            continue  # already connected to a page
+        title = topic.label
+        if publisher.page_exists(title):
+            log.warning(
+                "Theme %s (%s): page %r already exists and is not linked — "
+                "skipping to avoid hijacking it; connect it manually.",
+                topic.qid, topic.label, title,
             )
-        publisher.edit(
-            INDEX_PAGE_TITLE, build_index_page(topics), "Update research theme index"
-        )
+            continue
+        publisher.edit(title, RESEARCH_THEME_STUB, "Create research theme page")
+        kg.set_theme_sitelink(topic.qid, title)
+
+    publisher.edit(
+        INDEX_PAGE_TITLE, build_index_page(topics), "Update research theme index"
+    )
     return titles

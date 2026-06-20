@@ -81,34 +81,68 @@ def test_harvest_step_isolates_failing_paper():
 
 
 class FakePublisher:
-    def __init__(self):
-        self.ensured = []
+    def __init__(self, existing_pages=None):
+        self._existing = set(existing_pages or [])
         self.edited = []
 
-    def ensure_page(self, title, text, summary):
-        self.ensured.append((title, text))
-        return True
+    def page_exists(self, title):
+        return title in self._existing
 
     def edit(self, title, text, summary):
-        self.edited.append(title)
+        self.edited.append((title, text))
 
 
-def test_generate_pages_step_ensures_theme_stub_pages_and_index():
+class FakeSitelinkKG:
+    def __init__(self, connected=None):
+        self._connected = dict(connected or {})   # qid -> page title
+        self.sitelinks_set = []
+
+    def get_theme_sitelink(self, qid):
+        return self._connected.get(qid)
+
+    def set_theme_sitelink(self, qid, title):
+        self.sitelinks_set.append((qid, title))
+        self._connected[qid] = title
+
+
+def test_ensure_theme_pages_creates_page_and_sitelink_when_unconnected():
     cfg = load_config({})
     pub = FakePublisher()
-    result = pipeline.generate_pages_step(cfg, topics=TOPICS, publisher=pub)
+    kg = FakeSitelinkKG()
+    result = pipeline.ensure_theme_pages_step(cfg, topics=TOPICS, publisher=pub, kg=kg)
 
     assert result == ["Online Algorithms"]
-    # the theme page is created with just the template stub (not a built table)
-    assert pub.ensured == [("Online Algorithms", "{{ResearchTheme}}\n")]
-    # the master index is (over)written
-    assert pub.edited == ["Research themes"]
+    # page created with the stub, then sitelink wired to it
+    assert ("Online Algorithms", "{{ResearchTheme}}\n") in pub.edited
+    assert kg.sitelinks_set == [("Q11", "Online Algorithms")]
+    # index page also written
+    assert ("Research themes", "= Research themes =\n\n* [[Online Algorithms]]\n") in pub.edited
 
 
-def test_generate_pages_step_dry_run_writes_nothing():
+def test_ensure_theme_pages_skips_already_connected_theme():
+    cfg = load_config({})
+    pub = FakePublisher()
+    kg = FakeSitelinkKG(connected={"Q11": "Existing Page"})
+    pipeline.ensure_theme_pages_step(cfg, topics=TOPICS, publisher=pub, kg=kg)
+    assert kg.sitelinks_set == []                       # no sitelink rewired
+    assert all(t != "Online Algorithms" for t, _ in pub.edited)  # no theme page created
+    assert any(t == "Research themes" for t, _ in pub.edited)    # index still refreshed
+
+
+def test_ensure_theme_pages_does_not_hijack_existing_page():
+    cfg = load_config({})
+    pub = FakePublisher(existing_pages={"Online Algorithms"})   # unrelated page already there
+    kg = FakeSitelinkKG()
+    pipeline.ensure_theme_pages_step(cfg, topics=TOPICS, publisher=pub, kg=kg)
+    assert kg.sitelinks_set == []                       # did not hijack
+    assert all(t != "Online Algorithms" for t, _ in pub.edited)
+
+
+def test_ensure_theme_pages_dry_run_writes_nothing():
     cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "true"})
     pub = FakePublisher()
-    result = pipeline.generate_pages_step(cfg, topics=TOPICS, publisher=pub)
+    kg = FakeSitelinkKG()
+    result = pipeline.ensure_theme_pages_step(cfg, topics=TOPICS, publisher=pub, kg=kg)
     assert result == ["Online Algorithms"]
-    assert pub.ensured == []
     assert pub.edited == []
+    assert kg.sitelinks_set == []

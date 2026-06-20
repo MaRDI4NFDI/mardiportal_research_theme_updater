@@ -19,6 +19,10 @@ P_HAS_PART = "P265"            # topic --has part(s)--> paper (membership lives 
 Q_SCHOLARLY_ARTICLE = "Q56887"
 Q_PREPRINT = "Q159099"
 
+# Sitelink site-id connecting a Wikibase item to its rendered wiki page on the
+# MaRDI portal (verified from an existing connected item's sitelinks).
+SITE_ID = "mardi"
+
 
 def qid_from_uri(uri: str) -> str:
     """Extract the trailing Q-id from an entity URI (or pass through a bare QID)."""

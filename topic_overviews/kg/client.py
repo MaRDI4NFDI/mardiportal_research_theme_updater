@@ -57,6 +57,19 @@ class KGClient:
         topic_item.add_claim(f"wdt:{M.P_HAS_PART}", value=f"wd:{paper_qid}")
         topic_item.write()
 
+    def get_theme_sitelink(self, theme_qid: str) -> str | None:
+        """Return the wiki page title the theme item is connected to (``mardi``
+        sitelink), or None if the item has no connected page yet."""
+        item = self.mc.item.get(entity_id=theme_qid)
+        sitelink = item.sitelinks.get(M.SITE_ID)
+        return sitelink.title if sitelink else None
+
+    def set_theme_sitelink(self, theme_qid: str, page_title: str) -> None:
+        """Connect the theme item to its wiki page via the ``mardi`` sitelink."""
+        item = self.mc.item.get(entity_id=theme_qid)
+        item.sitelinks.set(site=M.SITE_ID, title=page_title)
+        item.write()
+
 
 def make_kg_client(config) -> KGClient:
     from mardiclient import MardiClient

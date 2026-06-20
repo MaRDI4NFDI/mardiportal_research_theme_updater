@@ -8,13 +8,31 @@ PAPER = PaperRecord(
 )
 
 
+class _Sitelink:
+    def __init__(self, title): self.title = title
+
+
+class FakeSitelinks:
+    def __init__(self, data=None):
+        self._d = dict(data or {})
+        self.set_calls = []
+
+    def get(self, site):
+        return _Sitelink(self._d[site]) if site in self._d else None
+
+    def set(self, site=None, title=None):
+        self.set_calls.append((site, title))
+        self._d[site] = title
+
+
 class FakeItem:
-    def __init__(self, values=None, item_id="Q500"):
+    def __init__(self, values=None, item_id="Q500", sitelinks=None):
         self.claims = []
         self.label = None
         self.id = item_id
         self._values = values or {}
         self.written = False
+        self.sitelinks = FakeSitelinks(sitelinks)
 
     class _Labels:
         def __init__(self, outer): self.outer = outer
@@ -99,3 +117,23 @@ def test_link_topic_is_idempotent_when_paper_already_listed():
     KGClient(mc).link_topic("Q11", "Q500")
     assert topic.claims == []        # nothing added
     assert topic.written is False     # no write attempted
+
+
+def test_get_theme_sitelink_returns_title_when_connected():
+    theme = FakeItem(item_id="Q11", sitelinks={"mardi": "My Theme Page"})
+    mc = FakeMC(item=theme)
+    assert KGClient(mc).get_theme_sitelink("Q11") == "My Theme Page"
+
+
+def test_get_theme_sitelink_none_when_unconnected():
+    theme = FakeItem(item_id="Q11")
+    mc = FakeMC(item=theme)
+    assert KGClient(mc).get_theme_sitelink("Q11") is None
+
+
+def test_set_theme_sitelink_sets_mardi_site_and_writes():
+    theme = FakeItem(item_id="Q11")
+    mc = FakeMC(item=theme)
+    KGClient(mc).set_theme_sitelink("Q11", "My Theme Page")
+    assert theme.sitelinks.set_calls == [("mardi", "My Theme Page")]
+    assert theme.written is True

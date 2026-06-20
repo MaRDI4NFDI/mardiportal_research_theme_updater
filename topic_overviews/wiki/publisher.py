@@ -67,14 +67,3 @@ class WikiPublisher:
         pages = resp.json()["query"]["pages"]
         # MediaWiki marks absent titles with a "missing" key (and a negative pageid).
         return not any("missing" in page for page in pages.values())
-
-    def ensure_page(self, title: str, text: str, summary: str) -> bool:
-        """Create the page with ``text`` only if it does not exist yet.
-
-        Returns True if the page was created, False if it already existed (left
-        untouched, so curator edits are never clobbered).
-        """
-        if self.page_exists(title):
-            return False
-        self.edit(title, text, summary)
-        return True
