@@ -16,6 +16,11 @@ from . import pipeline
 def main() -> None:
     parser = argparse.ArgumentParser(prog="topic_overviews")
     parser.add_argument("--dry-run", action="store_true", help="harvest + classify but skip all writes")
+    parser.add_argument(
+        "--themes-only", action="store_true",
+        help="skip arXiv harvest/classify; only ensure theme pages + sitelinks "
+             "(no Anthropic key needed) — handy for testing a new theme",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -25,14 +30,16 @@ def main() -> None:
     if args.dry_run:
         config = dataclasses.replace(config, dry_run=True)
 
-    state = load_state(config.state_path)
     topics = load_registered_topics(config.sparql_endpoint_url, config.research_theme_qid)
     log.info("Loaded %d registered research themes", len(topics))
 
     kg = None if config.dry_run else make_kg_client(config)
-    imported = pipeline.harvest_step(config, state, topics=topics, kg=kg)
-    log.info("Imported %d papers", imported)
-    save_state(config.state_path, state)
+
+    if not args.themes_only:
+        state = load_state(config.state_path)
+        imported = pipeline.harvest_step(config, state, topics=topics, kg=kg)
+        log.info("Imported %d papers", imported)
+        save_state(config.state_path, state)
 
     publisher = None if config.dry_run else _make_publisher(config)
     pages = pipeline.ensure_theme_pages_step(
