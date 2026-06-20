@@ -26,7 +26,7 @@ def test_harvest_step_imports_only_matched_and_updates_state():
     state = State()
     kg = FakeKG()
 
-    def fake_fetch(from_date, set_spec): return iter([P1, P2])
+    def fake_fetch(config): return iter([P1, P2])
     def fake_classify(paper, topics, *, model, api_key):
         return ["Q11"] if paper.arxiv_id == "2401.00001" else []
 
@@ -44,7 +44,7 @@ def test_harvest_step_skips_seen_ids():
     state = State(seen_ids={"2401.00001"})
     kg = FakeKG()
     count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
-                                  fetch=lambda f, set_spec: iter([P1]),
+                                  fetch=lambda config: iter([P1]),
                                   classify=lambda *a, **k: ["Q11"])
     assert count == 0
     assert kg.imported == []
@@ -55,7 +55,7 @@ def test_harvest_step_dry_run_does_not_import():
     state = State()
     kg = FakeKG()
     count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
-                                  fetch=lambda f, set_spec: iter([P1]),
+                                  fetch=lambda config: iter([P1]),
                                   classify=lambda *a, **k: ["Q11"])
     assert count == 1 and kg.imported == []
 
@@ -67,7 +67,7 @@ def test_harvest_step_respects_harvest_limit():
     P3 = PaperRecord("2401.00003", "Third", "abs", ["Z"], ["math.CO"], "2024-01-04", None)
     calls = []
 
-    def fake_fetch(from_date, set_spec):
+    def fake_fetch(config):
         return iter([P1, P2, P3])
 
     def fake_classify(paper, topics, *, model, api_key):
@@ -86,7 +86,7 @@ def test_harvest_step_isolates_failing_paper():
     state = State()
     kg = FakeKG()
 
-    def fake_fetch(from_date, set_spec): return iter([P1, P2])
+    def fake_fetch(config): return iter([P1, P2])
     def fake_classify(paper, topics, *, model, api_key):
         if paper.arxiv_id == "2401.00001":
             return ["Q11"]

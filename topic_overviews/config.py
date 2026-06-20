@@ -9,6 +9,8 @@ from typing import Mapping
 @dataclass(frozen=True)
 class Config:
     arxiv_set: str
+    arxiv_query: str
+    since_days: int
     model: str
     relevance_threshold: float
     state_path: str
@@ -30,6 +32,8 @@ def _flag(value: str) -> bool:
 def load_config(env: Mapping[str, str] = os.environ) -> Config:
     return Config(
         arxiv_set=env.get("TOPIC_OVERVIEWS_ARXIV_SET", "math"),
+        arxiv_query=env.get("TOPIC_OVERVIEWS_ARXIV_QUERY", ""),
+        since_days=int(env.get("TOPIC_OVERVIEWS_SINCE_DAYS", "10")),
         model=env.get("TOPIC_OVERVIEWS_MODEL", "claude-haiku-4-5"),
         relevance_threshold=float(env.get("TOPIC_OVERVIEWS_RELEVANCE_THRESHOLD", "0.0")),
         state_path=env.get("TOPIC_OVERVIEWS_STATE_PATH", "state.json"),

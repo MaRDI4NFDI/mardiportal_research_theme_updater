@@ -6,12 +6,17 @@ import logging
 
 from .config import Config
 from .state import State
-from .harvest.arxiv_oai import fetch_records
+from .harvest.arxiv_search import search_records
 from .kg.topics import Topic
 from .llm.topic_classifier import classify_paper
 from .wiki.page_builder import build_index_page, RESEARCH_THEME_STUB, INDEX_PAGE_TITLE
 
 log = logging.getLogger(__name__)
+
+
+def default_harvest(config: Config):
+    """Default paper source: arXiv keyword search over a recent date window."""
+    return search_records(config.arxiv_query, config.since_days)
 
 
 def harvest_step(
@@ -20,12 +25,12 @@ def harvest_step(
     *,
     topics: list[Topic],
     kg,
-    fetch=fetch_records,
+    fetch=default_harvest,
     classify=classify_paper,
 ) -> int:
     imported = 0
     considered = 0
-    for record in fetch(state.last_harvest, config.arxiv_set):
+    for record in fetch(config):
         if record.arxiv_id in state.seen_ids:
             continue
         state.seen_ids.add(record.arxiv_id)
