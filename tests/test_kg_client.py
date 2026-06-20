@@ -74,3 +74,5 @@ def test_import_existing_paper_reuses_item():
     assert qid == "Q500"
     # existing item fetched, not newly labelled
     assert item.label is None
+    assert ("wdt:P31", "wd:Q56887") in item.claims      # claims still written on existing item
+    assert ("wdt:P30", "wd:Q11") in item.claims          # topic link added to existing item
