@@ -9,10 +9,12 @@ PAPER = PaperRecord(
 
 
 class FakeItem:
-    def __init__(self):
+    def __init__(self, values=None, item_id="Q500"):
         self.claims = []
         self.label = None
-        self.id = "Q500"
+        self.id = item_id
+        self._values = values or {}
+        self.written = False
 
     class _Labels:
         def __init__(self, outer): self.outer = outer
@@ -24,7 +26,12 @@ class FakeItem:
     def add_claim(self, prop, value=None, action="append_or_replace"):
         self.claims.append((prop, value))
 
-    def write(self): return self
+    def get_value(self, prop):
+        return self._values.get(prop, [])
+
+    def write(self):
+        self.written = True
+        return self
 
 
 class FakeItemNS:
@@ -48,10 +55,10 @@ def test_to_wbi_time():
     assert to_wbi_time("2024-01-02") == "+2024-01-02T00:00:00Z"
 
 
-def test_import_new_paper_writes_all_statements_and_links():
+def test_import_new_paper_writes_only_paper_statements():
     item = FakeItem()
     mc = FakeMC(existing=[], item=item)
-    qid = KGClient(mc).import_paper(PAPER, ["Q11", "Q12"])
+    qid = KGClient(mc).import_paper(PAPER)
 
     assert qid == "Q500"
     assert mc.searched == [("wdt:P21", "2401.00001")]
@@ -63,16 +70,32 @@ def test_import_new_paper_writes_all_statements_and_links():
     assert ("wdt:P28", "+2024-01-02T00:00:00Z") in item.claims
     assert ("wdt:P22", "math.OC") in item.claims
     assert ("wdt:P43", "Jane Doe") in item.claims
-    assert ("wdt:P30", "wd:Q11") in item.claims             # main subject -> topic
-    assert ("wdt:P30", "wd:Q12") in item.claims
+    # The paper carries NO topic/membership statement — papers stay topic-agnostic.
+    assert not any(prop == "wdt:P265" for prop, _ in item.claims)
+    assert not any(prop == "wdt:P30" for prop, _ in item.claims)
 
 
 def test_import_existing_paper_reuses_item():
     item = FakeItem()
     mc = FakeMC(existing=["Q500"], item=item)
-    qid = KGClient(mc).import_paper(PAPER, ["Q11"])
+    qid = KGClient(mc).import_paper(PAPER)
     assert qid == "Q500"
     # existing item fetched, not newly labelled
     assert item.label is None
     assert ("wdt:P31", "wd:Q56887") in item.claims      # claims still written on existing item
-    assert ("wdt:P30", "wd:Q11") in item.claims          # topic link added to existing item
+
+
+def test_link_topic_adds_paper_to_topic_when_absent():
+    topic = FakeItem(item_id="Q11")
+    mc = FakeMC(item=topic)
+    KGClient(mc).link_topic("Q11", "Q500")
+    assert ("wdt:P265", "wd:Q500") in topic.claims      # has part(s) -> paper, on the TOPIC item
+    assert topic.written is True
+
+
+def test_link_topic_is_idempotent_when_paper_already_listed():
+    topic = FakeItem(item_id="Q11", values={"wdt:P265": ["Q500", "Q777"]})
+    mc = FakeMC(item=topic)
+    KGClient(mc).link_topic("Q11", "Q500")
+    assert topic.claims == []        # nothing added
+    assert topic.written is False     # no write attempted

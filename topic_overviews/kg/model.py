@@ -13,6 +13,7 @@ P_DOI = "P27"
 P_MAIN_SUBJECT = "P30"
 P_SUBCLASS_OF = "P36"
 P_AFFILIATION = "P55"
+P_HAS_PART = "P265"            # topic --has part(s)--> paper (membership lives on the topic)
 
 # Classes
 Q_SCHOLARLY_ARTICLE = "Q56887"

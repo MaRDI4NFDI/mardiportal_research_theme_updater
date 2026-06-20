@@ -13,9 +13,13 @@ P2 = PaperRecord("2401.00002", "Unrelated", "abs", ["X"], ["math.AG"], "2024-01-
 
 
 class FakeKG:
-    def __init__(self): self.imported = []
-    def import_paper(self, record, topic_qids):
-        self.imported.append((record.arxiv_id, topic_qids)); return "Q999"
+    def __init__(self):
+        self.imported = []
+        self.links = []
+    def import_paper(self, record):
+        self.imported.append(record.arxiv_id); return "Q999"
+    def link_topic(self, topic_qid, paper_qid):
+        self.links.append((topic_qid, paper_qid))
 
 
 def test_harvest_step_imports_only_matched_and_updates_state():
@@ -30,7 +34,8 @@ def test_harvest_step_imports_only_matched_and_updates_state():
     count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
                                   fetch=fake_fetch, classify=fake_classify)
     assert count == 1
-    assert kg.imported == [("2401.00001", ["Q11"])]
+    assert kg.imported == ["2401.00001"]
+    assert kg.links == [("Q11", "Q999")]            # paper Q999 added to topic Q11 via P265
     assert state.seen_ids == {"2401.00001", "2401.00002"}
     assert state.last_harvest == datetime.date.today().isoformat()
 
@@ -70,6 +75,8 @@ def test_harvest_step_isolates_failing_paper():
     count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
                                   fetch=fake_fetch, classify=fake_classify)
     assert count == 1
+    assert kg.imported == ["2401.00001"]
+    assert kg.links == [("Q11", "Q999")]
     assert "2401.00001" in state.seen_ids
     assert "2401.00002" in state.seen_ids
 

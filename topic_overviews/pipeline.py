@@ -38,7 +38,9 @@ def harvest_step(
             if not matched:
                 continue
             if not config.dry_run:
-                kg.import_paper(record, matched)
+                paper_qid = kg.import_paper(record)
+                for topic_qid in matched:
+                    kg.link_topic(topic_qid, paper_qid)
             imported += 1
         except Exception as exc:
             log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)

@@ -25,7 +25,7 @@ class TopicPageData:
 
 
 _QUERY = """SELECT ?title ?year ?arxiv (GROUP_CONCAT(?author; SEPARATOR="; ") AS ?authors) WHERE {{
-  ?paper wdt:{p_subject} wd:{topic} .
+  wd:{topic} wdt:{p_haspart} ?paper .
   ?paper wdt:{p_title} ?title .
   OPTIONAL {{ ?paper wdt:{p_date} ?year }}
   OPTIONAL {{ ?paper wdt:{p_arxiv} ?arxiv }}
@@ -35,7 +35,7 @@ _QUERY = """SELECT ?title ?year ?arxiv (GROUP_CONCAT(?author; SEPARATOR="; ") AS
 
 def fetch_topic_page_data(sparql_endpoint: str, topic: Topic, run=run_sparql) -> TopicPageData:
     query = _QUERY.format(
-        p_subject=M.P_MAIN_SUBJECT, topic=topic.qid, p_title=M.P_TITLE,
+        p_haspart=M.P_HAS_PART, topic=topic.qid, p_title=M.P_TITLE,
         p_date=M.P_PUBLICATION_DATE, p_arxiv=M.P_ARXIV_ID, p_author=M.P_AUTHOR_NAME_STRING,
     )
     rows = run(sparql_endpoint, query)
