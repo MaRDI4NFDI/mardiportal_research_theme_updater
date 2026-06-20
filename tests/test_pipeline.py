@@ -39,9 +39,10 @@ def test_harvest_step_skips_seen_ids():
     cfg = load_config({})
     state = State(seen_ids={"2401.00001"})
     kg = FakeKG()
-    pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
-                          fetch=lambda f, set_spec: iter([P1]),
-                          classify=lambda *a, **k: ["Q11"])
+    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+                                  fetch=lambda f, set_spec: iter([P1]),
+                                  classify=lambda *a, **k: ["Q11"])
+    assert count == 0
     assert kg.imported == []
 
 
@@ -70,3 +71,20 @@ def test_generate_pages_step_publishes_topic_and_index():
                                           fetch_page_data=fake_page_data)
     assert [d.label for d in result] == ["Online Algorithms"]
     assert published == ["Topic:Online Algorithms", "Topic overview"]
+
+
+def test_generate_pages_step_dry_run_does_not_publish():
+    cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "true"})
+    published = []
+
+    class FakePublisher:
+        def edit(self, title, text, summary): published.append(title)
+
+    def fake_page_data(endpoint, topic):
+        return TopicPageData(topic.qid, topic.label, topic.description,
+                             [PaperEntry("Caching", ["Jane Doe"], "2024", "2401.00001")])
+
+    result = pipeline.generate_pages_step(cfg, topics=TOPICS, publisher=FakePublisher(),
+                                          fetch_page_data=fake_page_data)
+    assert [d.label for d in result] == ["Online Algorithms"]
+    assert published == []
