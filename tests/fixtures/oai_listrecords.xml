@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">
+  <ListRecords>
+    <record>
+      <header><identifier>oai:arXiv.org:2401.00001</identifier></header>
+      <metadata>
+        <arXiv xmlns="http://arxiv.org/OAI/arXiv/">
+          <id>2401.00001</id>
+          <created>2024-01-02</created>
+          <title>A New Bound for Online Caching</title>
+          <abstract>We prove a tighter competitive ratio for caching.</abstract>
+          <categories>math.OC cs.DS</categories>
+          <doi>10.1000/xyz</doi>
+          <authors>
+            <author><keyname>Doe</keyname><forenames>Jane</forenames></author>
+            <author><keyname>Smith</keyname><forenames>John</forenames></author>
+          </authors>
+        </arXiv>
+      </metadata>
+    </record>
+    <record>
+      <header status="deleted"><identifier>oai:arXiv.org:2401.00002</identifier></header>
+    </record>
+    <resumptionToken>TOKEN123</resumptionToken>
+  </ListRecords>
+</OAI-PMH>
