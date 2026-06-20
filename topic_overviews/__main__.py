@@ -34,14 +34,16 @@ def main() -> None:
     log.info("Loaded %d registered research themes", len(topics))
 
     kg = None if config.dry_run else make_kg_client(config)
+    publisher = None if config.dry_run else _make_publisher(config)
 
     if not args.themes_only:
         state = load_state(config.state_path)
-        imported = pipeline.harvest_step(config, state, topics=topics, kg=kg)
+        imported = pipeline.harvest_step(
+            config, state, topics=topics, kg=kg, publisher=publisher
+        )
         log.info("Imported %d papers", imported)
         save_state(config.state_path, state)
 
-    publisher = None if config.dry_run else _make_publisher(config)
     pages = pipeline.ensure_theme_pages_step(
         config, topics=topics, publisher=publisher, kg=kg
     )

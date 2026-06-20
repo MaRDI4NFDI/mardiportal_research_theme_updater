@@ -27,9 +27,11 @@ def harvest_step(
     kg,
     fetch=default_harvest,
     classify=classify_paper,
+    publisher=None,
 ) -> int:
     imported = 0
     considered = 0
+    imported_titles: list[str] = []
     for record in fetch(config):
         if record.arxiv_id in state.seen_ids:
             continue
@@ -45,10 +47,14 @@ def harvest_step(
                     for topic_qid in matched:
                         kg.link_topic(topic_qid, paper_qid)
                 imported += 1
+                imported_titles.append(record.title)
         except Exception as exc:
             log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
         if config.harvest_limit and considered >= config.harvest_limit:
             break
+    # Purge each new paper's page so it renders fresh on the portal.
+    if publisher is not None and not config.dry_run and imported_titles:
+        publisher.purge(imported_titles)
     state.last_harvest = datetime.date.today().isoformat()
     return imported
 
@@ -76,9 +82,12 @@ def ensure_theme_pages_step(
     if config.dry_run:
         return titles
 
+    page_titles: list[str] = []
     for topic in topics:
-        if kg.get_theme_sitelink(topic.qid):
-            continue  # already connected to a page
+        connected = kg.get_theme_sitelink(topic.qid)
+        if connected:
+            page_titles.append(connected)  # already wired; refresh its (cached) table
+            continue
         title = topic.label
         if publisher.page_exists(title):
             log.warning(
@@ -89,8 +98,11 @@ def ensure_theme_pages_step(
             continue
         publisher.edit(title, RESEARCH_THEME_STUB, "Create research theme page")
         kg.set_theme_sitelink(topic.qid, title)
+        page_titles.append(title)
 
     publisher.edit(
         INDEX_PAGE_TITLE, build_index_page(topics), "Update research theme index"
     )
+    # Purge theme pages (so their live tables refresh) and the index.
+    publisher.purge(page_titles + [INDEX_PAGE_TITLE])
     return titles

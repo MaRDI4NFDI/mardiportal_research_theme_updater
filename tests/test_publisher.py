@@ -43,6 +43,15 @@ def test_login_then_edit_posts_text_with_token():
     assert edit_data["summary"] == "update"
 
 
+def test_purge_posts_titles():
+    session = FakeSession([{"batchcomplete": "", "purge": []}])
+    pub = WikiPublisher("http://api", "bot", "pw", session=session)
+    pub.purge(["Page A", "Page B"])
+    post = [c for c in session.calls if c[0] == "POST"][0][1]
+    assert post["action"] == "purge"
+    assert post["titles"] == "Page A|Page B"
+
+
 def test_page_exists_true_and_false():
     present = FakeSession([
         {"query": {"pages": {"42": {"pageid": 42, "title": "My Theme"}}}},  # exists

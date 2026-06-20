@@ -81,6 +81,24 @@ def test_harvest_step_respects_harvest_limit():
     assert state.seen_ids == {"2401.00001", "2401.00002"}
 
 
+def test_harvest_step_purges_imported_paper_pages():
+    cfg = load_config({})
+    state = State()
+    kg = FakeKG()
+
+    class PurgePub:
+        def __init__(self): self.purged = []
+        def purge(self, titles): self.purged.extend(titles)
+
+    pub = PurgePub()
+    pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+                          fetch=lambda config: iter([P1, P2]),
+                          classify=lambda paper, *a, **k: ["Q11"] if paper.arxiv_id == "2401.00001" else [],
+                          publisher=pub)
+    # only the matched/imported paper's page title is purged
+    assert pub.purged == ["Caching"]
+
+
 def test_harvest_step_isolates_failing_paper():
     cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
     state = State()
@@ -105,12 +123,16 @@ class FakePublisher:
     def __init__(self, existing_pages=None):
         self._existing = set(existing_pages or [])
         self.edited = []
+        self.purged = []
 
     def page_exists(self, title):
         return title in self._existing
 
     def edit(self, title, text, summary):
         self.edited.append((title, text))
+
+    def purge(self, titles):
+        self.purged.extend(titles)
 
 
 class FakeSitelinkKG:
@@ -138,6 +160,8 @@ def test_ensure_theme_pages_creates_page_and_sitelink_when_unconnected():
     assert kg.sitelinks_set == [("Q11", "Online Algorithms")]
     # index page also written
     assert ("Research themes", "= Research themes =\n\n* [[Online Algorithms]]\n") in pub.edited
+    # the new theme page + index are purged so they render fresh
+    assert "Online Algorithms" in pub.purged and "Research themes" in pub.purged
 
 
 def test_ensure_theme_pages_skips_already_connected_theme():

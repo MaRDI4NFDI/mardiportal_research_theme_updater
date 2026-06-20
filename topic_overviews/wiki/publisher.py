@@ -57,6 +57,19 @@ class WikiPublisher:
         if resp.json().get("edit", {}).get("result") != "Success":
             raise RuntimeError(f"MediaWiki edit failed for {title}: {resp.json()}")
 
+    def purge(self, titles) -> None:
+        """Purge the MediaWiki parser cache for the given page titles so newly
+        created items and updated theme tables render fresh. Batched (<=50)."""
+        titles = [t for t in titles if t]
+        for i in range(0, len(titles), 50):
+            chunk = titles[i:i + 50]
+            resp = self.session.post(
+                self.api_url,
+                data={"action": "purge", "titles": "|".join(chunk), "format": "json"},
+                timeout=60,
+            )
+            resp.raise_for_status()
+
     def page_exists(self, title: str) -> bool:
         resp = self.session.get(
             self.api_url,
