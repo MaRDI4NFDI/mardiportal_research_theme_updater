@@ -14,10 +14,12 @@ P_MAIN_SUBJECT = "P30"
 P_SUBCLASS_OF = "P36"
 P_AFFILIATION = "P55"
 P_HAS_PART = "P265"            # topic --has part(s)--> paper (membership lives on the topic)
+P_PROFILE_TYPE = "P1460"       # MaRDI profile type
 
 # Classes
 Q_SCHOLARLY_ARTICLE = "Q56887"
 Q_PREPRINT = "Q159099"
+Q_PUBLICATION_PROFILE = "Q5976449"   # P1460 value for a publication ("Paper" profile)
 
 # Sitelink site-id connecting a Wikibase item to its rendered wiki page on the
 # MaRDI portal (verified from an existing connected item's sitelinks).

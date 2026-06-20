@@ -34,6 +34,7 @@ class KGClient:
             item.labels.set("en", record.title[:250])
 
         item.add_claim(M.P_INSTANCE_OF, value=M.Q_SCHOLARLY_ARTICLE)
+        item.add_claim(M.P_PROFILE_TYPE, value=M.Q_PUBLICATION_PROFILE)
         item.add_claim(M.P_ARXIV_ID, value=record.arxiv_id)
         if record.doi:
             item.add_claim(M.P_DOI, value=record.doi)

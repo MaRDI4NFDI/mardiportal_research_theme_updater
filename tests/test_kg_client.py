@@ -82,6 +82,7 @@ def test_import_new_paper_writes_only_paper_statements():
     assert mc.searched == [("P21", "2401.00001")]
     assert item.label == ("en", "A New Bound for Online Caching")
     assert ("P31", "Q56887") in item.claims          # instance of scholarly article
+    assert ("P1460", "Q5976449") in item.claims      # MaRDI publication profile type
     assert ("P21", "2401.00001") in item.claims         # arXiv id
     assert ("P27", "10.1000/xyz") in item.claims        # DOI
     assert ("P159", "A New Bound for Online Caching") in item.claims
