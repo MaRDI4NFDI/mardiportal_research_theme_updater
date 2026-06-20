@@ -60,6 +60,27 @@ def test_harvest_step_dry_run_does_not_import():
     assert count == 1 and kg.imported == []
 
 
+def test_harvest_step_respects_harvest_limit():
+    cfg = load_config({"TOPIC_OVERVIEWS_HARVEST_LIMIT": "2"})
+    state = State()
+    kg = FakeKG()
+    P3 = PaperRecord("2401.00003", "Third", "abs", ["Z"], ["math.CO"], "2024-01-04", None)
+    calls = []
+
+    def fake_fetch(from_date, set_spec):
+        return iter([P1, P2, P3])
+
+    def fake_classify(paper, topics, *, model, api_key):
+        calls.append(paper.arxiv_id)
+        return ["Q11"]
+
+    pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+                          fetch=fake_fetch, classify=fake_classify)
+    # only the first 2 new papers are considered/classified; the 3rd is never reached
+    assert calls == ["2401.00001", "2401.00002"]
+    assert state.seen_ids == {"2401.00001", "2401.00002"}
+
+
 def test_harvest_step_isolates_failing_paper():
     cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
     state = State()

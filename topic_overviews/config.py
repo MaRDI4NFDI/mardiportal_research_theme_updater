@@ -13,6 +13,7 @@ class Config:
     relevance_threshold: float
     state_path: str
     research_theme_qid: str
+    harvest_limit: int
     anthropic_api_key: str
     mediawiki_api_url: str
     mediawiki_bot_user: str
@@ -33,6 +34,7 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         relevance_threshold=float(env.get("TOPIC_OVERVIEWS_RELEVANCE_THRESHOLD", "0.0")),
         state_path=env.get("TOPIC_OVERVIEWS_STATE_PATH", "state.json"),
         research_theme_qid=env.get("TOPIC_OVERVIEWS_RESEARCH_THEME_QID", "Q0"),
+        harvest_limit=int(env.get("TOPIC_OVERVIEWS_HARVEST_LIMIT", "0")),  # 0 = unlimited
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", ""),
         mediawiki_api_url=env.get("MEDIAWIKI_API_URL", ""),
         mediawiki_bot_user=env.get("MEDIAWIKI_BOT_USER", ""),

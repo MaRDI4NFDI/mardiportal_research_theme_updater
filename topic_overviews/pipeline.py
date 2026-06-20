@@ -24,24 +24,26 @@ def harvest_step(
     classify=classify_paper,
 ) -> int:
     imported = 0
+    considered = 0
     for record in fetch(state.last_harvest, config.arxiv_set):
         if record.arxiv_id in state.seen_ids:
             continue
         state.seen_ids.add(record.arxiv_id)
+        considered += 1
         try:
             matched = classify(
                 record, topics, model=config.model, api_key=config.anthropic_api_key
             )
-            if not matched:
-                continue
-            if not config.dry_run:
-                paper_qid = kg.import_paper(record)
-                for topic_qid in matched:
-                    kg.link_topic(topic_qid, paper_qid)
-            imported += 1
+            if matched:
+                if not config.dry_run:
+                    paper_qid = kg.import_paper(record)
+                    for topic_qid in matched:
+                        kg.link_topic(topic_qid, paper_qid)
+                imported += 1
         except Exception as exc:
             log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
-            continue
+        if config.harvest_limit and considered >= config.harvest_limit:
+            break
     state.last_harvest = datetime.date.today().isoformat()
     return imported
 
