@@ -26,8 +26,8 @@ def main() -> None:
         config = dataclasses.replace(config, dry_run=True)
 
     state = load_state(config.state_path)
-    topics = load_registered_topics(config.sparql_endpoint_url, config.overview_topic_qid)
-    log.info("Loaded %d registered topics", len(topics))
+    topics = load_registered_topics(config.sparql_endpoint_url, config.research_theme_qid)
+    log.info("Loaded %d registered research themes", len(topics))
 
     kg = None if config.dry_run else make_kg_client(config)
     imported = pipeline.harvest_step(config, state, topics=topics, kg=kg)

@@ -1,4 +1,5 @@
-"""Read the topic registry from the KG (items that are instance-of overview-topic)."""
+"""Read the topic registry from the KG (items that are instance-of the
+``research theme`` class). Each such item is one research theme to classify into."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,8 +22,8 @@ _QUERY = """SELECT ?topic ?label ?desc WHERE {{
 }}"""
 
 
-def load_registered_topics(sparql_endpoint: str, overview_topic_qid: str, run=run_sparql) -> list[Topic]:
-    query = _QUERY.format(p_inst=P_INSTANCE_OF, cls=overview_topic_qid)
+def load_registered_topics(sparql_endpoint: str, research_theme_qid: str, run=run_sparql) -> list[Topic]:
+    query = _QUERY.format(p_inst=P_INSTANCE_OF, cls=research_theme_qid)
     rows = run(sparql_endpoint, query)
     return [
         Topic(
