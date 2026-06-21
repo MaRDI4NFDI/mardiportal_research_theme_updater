@@ -20,3 +20,18 @@ def test_load_config_reads_env_and_defaults():
 def test_dry_run_defaults_false():
     cfg = load_config({})
     assert cfg.dry_run is False
+
+
+def test_config_openalex_defaults():
+    cfg = load_config({})
+    assert cfg.openalex_query_property == ""
+    assert cfg.openalex_email == ""
+
+
+def test_config_openalex_from_env():
+    cfg = load_config({
+        "TOPIC_OVERVIEWS_OPENALEX_QUERY_PROPERTY": "P1967",
+        "TOPIC_OVERVIEWS_OPENALEX_EMAIL": "bot@example.com",
+    })
+    assert cfg.openalex_query_property == "P1967"
+    assert cfg.openalex_email == "bot@example.com"

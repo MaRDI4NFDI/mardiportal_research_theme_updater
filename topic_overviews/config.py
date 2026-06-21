@@ -10,6 +10,8 @@ from typing import Mapping
 class Config:
     arxiv_query: str
     arxiv_query_property: str
+    openalex_query_property: str
+    openalex_email: str
     since_days: int
     llm_provider: str
     openai_base_url: str
@@ -36,6 +38,8 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
     return Config(
         arxiv_query=env.get("TOPIC_OVERVIEWS_ARXIV_QUERY", ""),
         arxiv_query_property=env.get("TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY", "P1965"),
+        openalex_query_property=env.get("TOPIC_OVERVIEWS_OPENALEX_QUERY_PROPERTY", ""),
+        openalex_email=env.get("TOPIC_OVERVIEWS_OPENALEX_EMAIL", ""),
         since_days=int(env.get("TOPIC_OVERVIEWS_SINCE_DAYS", "10")),
         llm_provider=env.get("TOPIC_OVERVIEWS_LLM_PROVIDER", "anthropic"),
         openai_base_url=env.get("TOPIC_OVERVIEWS_OPENAI_BASE_URL", "https://ollama.zib.de/api"),
