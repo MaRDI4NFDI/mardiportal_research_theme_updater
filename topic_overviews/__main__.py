@@ -40,6 +40,7 @@ def main() -> None:
         config.sparql_endpoint_url,
         config.research_theme_qid,
         arxiv_query_property=config.arxiv_query_property,
+        openalex_query_property=config.openalex_query_property,
     )
     log.info("Loaded %d registered research themes", len(topics))
     for t in topics:

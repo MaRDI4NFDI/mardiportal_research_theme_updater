@@ -8,6 +8,7 @@ import logging
 from .config import Config
 from .state import State
 from .harvest.arxiv_search import search_records
+from .harvest.openalex import fetch_openalex_records
 from .kg.topics import Topic
 from .llm.topic_classifier import classify_paper
 from .llm.summarizer import summarize_paper
@@ -45,6 +46,92 @@ def _harvest_configs(config: Config, topics: list[Topic]) -> list[Config]:
     return [dataclasses.replace(config, arxiv_query=query) for query in queries]
 
 
+def _openalex_queries(topics: list[Topic]) -> list[str]:
+    """Collect unique non-empty openalex_query values from topics, preserving order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for topic in topics:
+        q = topic.openalex_query.strip()
+        if q and q not in seen:
+            seen.add(q)
+            result.append(q)
+    return result
+
+
+def _process_record(
+    record,
+    source_label: str,
+    covering: list[Topic],
+    config: Config,
+    state,
+    kg,
+    classify,
+    summarize,
+    keyworder,
+    llm,
+    model: str | None,
+    topic_label: dict,
+    imported_titles: list,
+    imported_qids: list,
+) -> bool:
+    """Classify, optionally import, and link one record. Returns True if imported."""
+    rid = record.record_id
+    if rid in state.seen_ids:
+        return False
+    state.seen_ids.add(rid)
+
+    existing_qid = None
+    get_paper_qid = getattr(kg, "get_paper_qid", None)
+    paper_has_tldr = getattr(kg, "paper_has_tldr", None)
+    if callable(get_paper_qid) and callable(paper_has_tldr) and record.arxiv_id:
+        existing_qid = get_paper_qid(record.arxiv_id)
+        if existing_qid and paper_has_tldr(existing_qid):
+            log.info(
+                "Skipping %s paper %s (%s): KG item %s already has P1963",
+                source_label, rid, record.title, existing_qid,
+            )
+            return False
+
+    log.info("Classifying %s paper %s (%s) with model %s", source_label, rid, record.title, model)
+    matched = classify(
+        record,
+        covering,
+        model=model,
+        api_key=config.anthropic_api_key,
+        llm=llm,
+    )
+    matched_labels = [f"{topic_label.get(q, q)} ({q})" for q in matched] if matched else []
+    log.info(
+        "Classified %s paper %s (%s) into: %s",
+        source_label, rid, record.title,
+        ", ".join(matched_labels) if matched_labels else "no matching theme",
+    )
+    if not matched:
+        return False
+
+    if not config.dry_run:
+        log.info("Generating TL;DR and keywords for %s (%s)", rid, record.title)
+        tldr = summarize(record, model=model, api_key=config.anthropic_api_key, llm=llm)
+        if not tldr:
+            raise PipelineError(f"No TL;DR generated for {rid} ({record.title!r})")
+        keywords = keyworder(record, model=model, api_key=config.anthropic_api_key, llm=llm)
+        paper_qid = kg.import_paper(
+            record, tldr=tldr, keywords=keywords, generated_by=config.model_qid or None,
+        )
+        imported_qids.append(paper_qid)
+        log.info("Inserted %s paper %s as KG item %s", source_label, rid, paper_qid)
+        for topic_qid in matched:
+            kg.link_topic(topic_qid, paper_qid)
+            log.info(
+                "Linked %s to theme %s (%s)", paper_qid,
+                topic_label.get(topic_qid, topic_qid), topic_qid,
+            )
+            if config.theme_max_papers:
+                kg.enforce_theme_limit(topic_qid, config.theme_max_papers)
+    imported_titles.append(record.title)
+    return True
+
+
 def harvest_step(
     config: Config,
     state: State,
@@ -52,6 +139,7 @@ def harvest_step(
     topics: list[Topic],
     kg,
     fetch=default_harvest,
+    fetch_oa=None,
     classify=classify_paper,
     summarize=summarize_paper,
     keyworder=keywords_paper,
@@ -60,117 +148,77 @@ def harvest_step(
     publisher=None,
 ) -> int:
     imported = 0
-    considered = 0
     imported_titles: list[str] = []
     imported_qids: list[str] = []
     topic_label = {t.qid: t.label for t in topics}
     llm = llm or make_llm_client(config)
     model = model or config.model_qid
+
+    # --- arXiv pass ---
     for harvest_config in _harvest_configs(config, topics):
-        covering = [t for t in topics if (t.arxiv_query or config.arxiv_query).strip() == harvest_config.arxiv_query]
-        for t in covering:
-            log.info("Processing theme: %s (%s)", t.label, t.qid)
+        covering = [
+            t for t in topics
+            if (t.arxiv_query or config.arxiv_query).strip() == harvest_config.arxiv_query
+        ]
         log.info(
             "Harvesting arXiv query %r for %d theme(s): %s",
-            harvest_config.arxiv_query,
-            len(covering),
+            harvest_config.arxiv_query, len(covering),
             ", ".join(f"{t.label} ({t.qid})" for t in covering),
         )
         query_imported = 0
         for record in fetch(harvest_config):
-            if record.arxiv_id in state.seen_ids:
-                continue
-            state.seen_ids.add(record.arxiv_id)
-            considered += 1
             try:
-                existing_qid = None
-                get_paper_qid = getattr(kg, "get_paper_qid", None)
-                paper_has_tldr = getattr(kg, "paper_has_tldr", None)
-                if callable(get_paper_qid) and callable(paper_has_tldr):
-                    existing_qid = get_paper_qid(record.arxiv_id)
-                    if existing_qid and paper_has_tldr(existing_qid):
-                        log.info(
-                            "Skipping arXiv paper %s (%s): KG item %s already has P1963",
-                            record.arxiv_id,
-                            record.title,
-                            existing_qid,
-                        )
-                        continue
-                log.info(
-                    "Classifying arXiv paper %s (%s) with model %s",
-                    record.arxiv_id,
-                    record.title,
-                    model,
+                did_import = _process_record(
+                    record, "arXiv", covering, config, state, kg,
+                    classify, summarize, keyworder, llm, model,
+                    topic_label, imported_titles, imported_qids,
                 )
-                matched = classify(
-                    record,
-                    topics,
-                    model=model,
-                    api_key=config.anthropic_api_key,
-                    llm=llm,
-                )
-                matched_labels = [f"{topic_label.get(q, q)} ({q})" for q in matched] if matched else []
-                log.info(
-                    "Classified arXiv paper %s (%s) into: %s",
-                    record.arxiv_id,
-                    record.title,
-                    ", ".join(matched_labels) if matched_labels else "no matching theme",
-                )
-                if matched:
-                    if not config.dry_run:
-                        log.info(
-                            "Generating TL;DR and keywords for %s (%s)",
-                            record.arxiv_id,
-                            record.title,
-                        )
-                        tldr = summarize(
-                            record,
-                            model=model,
-                            api_key=config.anthropic_api_key,
-                            llm=llm,
-                        )
-                        if not tldr:
-                            raise PipelineError(
-                                f"No TL;DR generated for {record.arxiv_id} ({record.title!r})"
-                            )
-                        keywords = keyworder(
-                            record,
-                            model=model,
-                            api_key=config.anthropic_api_key,
-                            llm=llm,
-                        )
-                        paper_qid = kg.import_paper(
-                            record, tldr=tldr, keywords=keywords,
-                            generated_by=config.model_qid or None,
-                        )
-                        imported_qids.append(paper_qid)
-                        log.info(
-                            "Inserted arXiv paper %s as KG item %s",
-                            record.arxiv_id,
-                            paper_qid,
-                        )
-                        for topic_qid in matched:
-                            kg.link_topic(topic_qid, paper_qid)
-                            log.info(
-                                "Linked %s to theme %s (%s)",
-                                paper_qid,
-                                topic_label.get(topic_qid, topic_qid),
-                                topic_qid,
-                            )
-                            if config.theme_max_papers:
-                                kg.enforce_theme_limit(topic_qid, config.theme_max_papers)
-                    imported += 1
-                    query_imported += 1
-                    imported_titles.append(record.title)
-                    if config.harvest_limit and query_imported >= config.harvest_limit:
-                        break
             except PipelineError:
                 raise
             except Exception as exc:
                 log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
+                continue
+            if did_import:
+                imported += 1
+                query_imported += 1
             if config.harvest_limit and query_imported >= config.harvest_limit:
                 break
-    # Purge each new paper's page so it renders fresh on the portal.
+
+    # --- OpenAlex pass ---
+    _fetch_oa = fetch_oa or (
+        lambda qs, sd, **kw: fetch_openalex_records(
+            qs, sd, email=config.openalex_email
+        )
+    )
+    for oa_query in _openalex_queries(topics):
+        covering = [t for t in topics if t.openalex_query.strip() == oa_query]
+        log.info(
+            "Harvesting OpenAlex query %r for %d theme(s): %s",
+            oa_query, len(covering),
+            ", ".join(f"{t.label} ({t.qid})" for t in covering),
+        )
+        query_imported = 0
+        for record in _fetch_oa(oa_query, config.since_days):
+            try:
+                did_import = _process_record(
+                    record, "OpenAlex", covering, config, state, kg,
+                    classify, summarize, keyworder, llm, model,
+                    topic_label, imported_titles, imported_qids,
+                )
+            except PipelineError:
+                raise
+            except Exception as exc:
+                log.warning(
+                    "Skipping OpenAlex paper %s due to error: %s",
+                    getattr(record, "openalex_id", "?"), exc,
+                )
+                continue
+            if did_import:
+                imported += 1
+                query_imported += 1
+            if config.harvest_limit and query_imported >= config.harvest_limit:
+                break
+
     if publisher is not None and not config.dry_run and imported_titles:
         publisher.purge(imported_titles)
     state.last_harvest = datetime.date.today().isoformat()

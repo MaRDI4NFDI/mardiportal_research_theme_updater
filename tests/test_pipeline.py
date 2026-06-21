@@ -7,6 +7,11 @@ from topic_overviews.harvest.arxiv_oai import PaperRecord
 from topic_overviews.kg.topics import Topic
 from topic_overviews import pipeline
 
+OA_TOPICS = [
+    Topic(qid="Q20", label="MaRDI", description="...", openalex_query="search=mardi&filter=funders.id:f123"),
+]
+OA_PAPER = PaperRecord("", "MaRDI Portal Paper", "abs", ["Dr. X"], [], "2024-06-01", doi="10.1/xyz", openalex_id="W9999999999")
+
 TOPICS = [Topic(qid="Q11", label="Online Algorithms", description="...")]
 QUERY_TOPICS = [
     Topic(qid="Q11", label="Online Algorithms", description="...", arxiv_query="cat:cs.DS"),
@@ -255,6 +260,95 @@ def test_harvest_step_isolates_failing_paper():
     assert kg.links == [("Q11", "Q999")]
     assert "2401.00001" in state.seen_ids
     assert "2401.00002" in state.seen_ids
+
+
+def test_harvest_step_runs_openalex_pass():
+    cfg = _cfg()
+    state = State()
+    kg = FakeKG()
+    oa_records = []
+
+    def fake_fetch_oa(query_str, since_days, **kwargs):
+        oa_records.append(query_str)
+        return iter([OA_PAPER])
+
+    def fake_classify(paper, topics, *, model, api_key, **kwargs):
+        return ["Q20"]
+
+    count = pipeline.harvest_step(
+        cfg,
+        state,
+        topics=OA_TOPICS,
+        kg=kg,
+        model="test-model",
+        fetch=lambda config: iter([]),         # arXiv yields nothing
+        fetch_oa=fake_fetch_oa,
+        classify=fake_classify,
+        summarize=_summ("tldr"),
+        keyworder=_kw(["kw"]),
+    )
+    assert count == 1
+    assert oa_records == ["search=mardi&filter=funders.id:f123"]
+    assert kg.imported[0][0] == ""             # arxiv_id empty (OpenAlex-only paper)
+    assert "openalex:W9999999999" in state.seen_ids
+
+
+def test_harvest_step_deduplicates_openalex_queries():
+    cfg = _cfg()
+    topics = [
+        Topic(qid="Q20", label="A", description="", openalex_query="search=mardi"),
+        Topic(qid="Q21", label="B", description="", openalex_query="search=mardi"),
+    ]
+    oa_calls = []
+
+    pipeline.harvest_step(
+        cfg,
+        State(),
+        topics=topics,
+        kg=FakeKG(),
+        model="test-model",
+        fetch=lambda config: iter([]),
+        fetch_oa=lambda qs, sd, **kw: oa_calls.append(qs) or iter([]),
+        classify=lambda *a, **k: [],
+    )
+    assert oa_calls == ["search=mardi"]
+
+
+def test_harvest_step_skips_seen_openalex_ids():
+    cfg = _cfg()
+    state = State(seen_ids={"openalex:W9999999999"})
+    kg = FakeKG()
+
+    count = pipeline.harvest_step(
+        cfg,
+        state,
+        topics=OA_TOPICS,
+        kg=kg,
+        model="test-model",
+        fetch=lambda config: iter([]),
+        fetch_oa=lambda qs, sd, **kw: iter([OA_PAPER]),
+        classify=lambda *a, **k: ["Q20"],
+    )
+    assert count == 0
+    assert kg.imported == []
+
+
+def test_harvest_step_no_openalex_when_no_query():
+    cfg = _cfg()
+    topics = [Topic(qid="Q11", label="Online Algorithms", description="...")]
+    oa_calls = []
+
+    pipeline.harvest_step(
+        cfg,
+        State(),
+        topics=topics,
+        kg=FakeKG(),
+        model="test-model",
+        fetch=lambda config: iter([]),
+        fetch_oa=lambda qs, sd, **kw: oa_calls.append(qs) or iter([]),
+        classify=lambda *a, **k: [],
+    )
+    assert oa_calls == []
 
 
 class FakePublisher:
