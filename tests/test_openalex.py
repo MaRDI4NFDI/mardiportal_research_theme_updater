@@ -1,8 +1,6 @@
 import datetime
 import json
 
-import pytest
-
 from topic_overviews.harvest.arxiv_oai import PaperRecord
 from topic_overviews.harvest.openalex import (
     fetch_openalex_records,
