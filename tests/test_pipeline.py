@@ -333,6 +333,59 @@ def test_harvest_step_skips_seen_openalex_ids():
     assert kg.imported == []
 
 
+def test_harvest_step_uses_per_theme_since_days_for_arxiv():
+    cfg = _cfg({"TOPIC_OVERVIEWS_SINCE_DAYS": "10"})
+    topics = [
+        Topic(qid="Q11", label="A", description="", arxiv_query="cat:math.NA", since_days=30),
+        Topic(qid="Q12", label="B", description="", arxiv_query="cat:cs.DS"),
+    ]
+    fetched_days = []
+
+    def fake_fetch(config):
+        fetched_days.append(config.since_days)
+        return iter([])
+
+    pipeline.harvest_step(
+        cfg, State(), topics=topics, kg=FakeKG(), model="m",
+        fetch=fake_fetch, classify=lambda *a, **k: [],
+    )
+    assert 30 in fetched_days
+    assert 10 in fetched_days
+
+
+def test_harvest_step_uses_per_theme_since_days_for_openalex():
+    cfg = _cfg({"TOPIC_OVERVIEWS_SINCE_DAYS": "10"})
+    topics = [
+        Topic(qid="Q20", label="MaRDI", description="", openalex_query="search=mardi", since_days=60),
+    ]
+    oa_calls = []
+
+    pipeline.harvest_step(
+        cfg, State(), topics=topics, kg=FakeKG(), model="m",
+        fetch=lambda config: iter([]),
+        fetch_oa=lambda qs, sd, **kw: oa_calls.append((qs, sd)) or iter([]),
+        classify=lambda *a, **k: [],
+    )
+    assert oa_calls == [("search=mardi", 60)]
+
+
+def test_harvest_step_deduplicates_same_query_different_since_days():
+    cfg = _cfg({"TOPIC_OVERVIEWS_SINCE_DAYS": "10"})
+    topics = [
+        Topic(qid="Q20", label="A", description="", openalex_query="search=x", since_days=30),
+        Topic(qid="Q21", label="B", description="", openalex_query="search=x", since_days=30),
+    ]
+    oa_calls = []
+
+    pipeline.harvest_step(
+        cfg, State(), topics=topics, kg=FakeKG(), model="m",
+        fetch=lambda config: iter([]),
+        fetch_oa=lambda qs, sd, **kw: oa_calls.append((qs, sd)) or iter([]),
+        classify=lambda *a, **k: [],
+    )
+    assert oa_calls == [("search=x", 30)]
+
+
 def test_harvest_step_no_openalex_when_no_query():
     cfg = _cfg()
     topics = [Topic(qid="Q11", label="Online Algorithms", description="...")]

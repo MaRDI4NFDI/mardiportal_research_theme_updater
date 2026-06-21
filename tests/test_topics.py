@@ -114,3 +114,45 @@ def test_load_topics_omits_openalex_when_property_not_configured():
         run=lambda endpoint, query: captured.append(query) or rows,
     )
     assert "openalexQuery" not in captured[0]
+
+
+def test_load_topics_includes_since_days():
+    rows = [
+        {
+            "topic": "https://portal.mardi4nfdi.de/entity/Q7266564",
+            "label": "MaRDI",
+            "desc": "",
+            "sinceDays": "30",
+        }
+    ]
+    topics = load_registered_topics(
+        "http://sparql",
+        "Q7266523",
+        since_days_property="P1968",
+        run=lambda endpoint, query: rows,
+    )
+    assert topics[0].since_days == 30
+
+
+def test_load_topics_since_days_defaults_to_none():
+    rows = [{"topic": "https://portal.mardi4nfdi.de/entity/Q7266564", "label": "MaRDI", "desc": ""}]
+    topics = load_registered_topics(
+        "http://sparql",
+        "Q7266523",
+        since_days_property="P1968",
+        run=lambda endpoint, query: rows,
+    )
+    assert topics[0].since_days is None
+
+
+def test_load_topics_omits_since_days_when_property_not_configured():
+    rows = [{"topic": "https://portal.mardi4nfdi.de/entity/Q7266564", "label": "MaRDI", "desc": ""}]
+    captured = []
+    load_registered_topics(
+        "http://sparql",
+        "Q7266523",
+        since_days_property="",
+        run=lambda endpoint, query: captured.append(query) or rows,
+    )
+    assert "sinceDays" not in captured[0]
+    assert "P1968" not in captured[0]

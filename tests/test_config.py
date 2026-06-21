@@ -35,3 +35,13 @@ def test_config_openalex_from_env():
     })
     assert cfg.openalex_query_property == "P1967"
     assert cfg.openalex_email == "bot@example.com"
+
+
+def test_config_since_days_property_default():
+    cfg = load_config({})
+    assert cfg.since_days_property == ""
+
+
+def test_config_since_days_property_from_env():
+    cfg = load_config({"TOPIC_OVERVIEWS_SINCE_DAYS_PROPERTY": "P1968"})
+    assert cfg.since_days_property == "P1968"

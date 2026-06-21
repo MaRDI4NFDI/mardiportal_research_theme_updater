@@ -28,33 +28,41 @@ def default_harvest(config: Config):
     return search_records(config.arxiv_query, config.since_days)
 
 
-def _harvest_configs(config: Config, topics: list[Topic]) -> list[Config]:
-    """Build one arXiv-search config per distinct theme query.
+def _effective_since_days(topic: Topic, config: Config) -> int:
+    return topic.since_days if topic.since_days is not None else config.since_days
 
-    Theme-owned queries are preferred. The global query remains a compatibility
-    fallback for themes that do not yet have the KG property set.
+
+def _harvest_configs(config: Config, topics: list[Topic]) -> list[Config]:
+    """Build one arXiv-search config per distinct (query, since_days) pair.
+
+    Theme-owned queries and since_days are preferred. The global values remain
+    fallbacks for themes that do not yet have the KG properties set.
     """
-    queries: list[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, int]] = set()
+    result: list[Config] = []
     for topic in topics:
         query = (topic.arxiv_query or config.arxiv_query).strip()
-        if query and query not in seen:
-            seen.add(query)
-            queries.append(query)
-    if not queries and config.arxiv_query.strip():
-        queries.append(config.arxiv_query.strip())
-    return [dataclasses.replace(config, arxiv_query=query) for query in queries]
+        days = _effective_since_days(topic, config)
+        if query and (query, days) not in seen:
+            seen.add((query, days))
+            result.append(dataclasses.replace(config, arxiv_query=query, since_days=days))
+    if not result and config.arxiv_query.strip():
+        result.append(config)
+    return result
 
 
-def _openalex_queries(topics: list[Topic]) -> list[str]:
-    """Collect unique non-empty openalex_query values from topics, preserving order."""
-    seen: set[str] = set()
-    result: list[str] = []
+def _openalex_query_configs(config: Config, topics: list[Topic]) -> list[tuple[str, int]]:
+    """Collect unique (openalex_query, since_days) pairs from topics, preserving order."""
+    seen: set[tuple[str, int]] = set()
+    result: list[tuple[str, int]] = []
     for topic in topics:
         q = topic.openalex_query.strip()
-        if q and q not in seen:
-            seen.add(q)
-            result.append(q)
+        if not q:
+            continue
+        days = _effective_since_days(topic, config)
+        if (q, days) not in seen:
+            seen.add((q, days))
+            result.append((q, days))
     return result
 
 
@@ -159,6 +167,7 @@ def harvest_step(
         covering = [
             t for t in topics
             if (t.arxiv_query or config.arxiv_query).strip() == harvest_config.arxiv_query
+            and _effective_since_days(t, config) == harvest_config.since_days
         ]
         log.info(
             "Harvesting arXiv query %r for %d theme(s): %s",
@@ -190,15 +199,19 @@ def harvest_step(
             qs, sd, email=config.openalex_email
         )
     )
-    for oa_query in _openalex_queries(topics):
-        covering = [t for t in topics if t.openalex_query.strip() == oa_query]
+    for oa_query, oa_since_days in _openalex_query_configs(config, topics):
+        covering = [
+            t for t in topics
+            if t.openalex_query.strip() == oa_query
+            and _effective_since_days(t, config) == oa_since_days
+        ]
         log.info(
-            "Harvesting OpenAlex query %r for %d theme(s): %s",
-            oa_query, len(covering),
+            "Harvesting OpenAlex query %r (since_days=%d) for %d theme(s): %s",
+            oa_query, oa_since_days, len(covering),
             ", ".join(f"{t.label} ({t.qid})" for t in covering),
         )
         query_imported = 0
-        for record in _fetch_oa(oa_query, config.since_days):
+        for record in _fetch_oa(oa_query, oa_since_days):
             try:
                 did_import = _process_record(
                     record, "OpenAlex", covering, config, state, kg,

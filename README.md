@@ -47,7 +47,8 @@ Configuration is environment-variable first.
 | `TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY` | `P1965` | Theme-item property containing an arXiv search query |
 | `TOPIC_OVERVIEWS_OPENALEX_QUERY_PROPERTY` | empty | Theme-item property containing an OpenAlex query string (`P1967`) |
 | `TOPIC_OVERVIEWS_OPENALEX_EMAIL` | empty | Email passed to OpenAlex polite pool (`mailto` param) |
-| `TOPIC_OVERVIEWS_SINCE_DAYS` | `10` | Search window in days |
+| `TOPIC_OVERVIEWS_SINCE_DAYS_PROPERTY` | empty | Theme-item property for per-theme harvest window in days (`P1968`) |
+| `TOPIC_OVERVIEWS_SINCE_DAYS` | `10` | Default search window in days (overridden per theme via `P1968`) |
 | `TOPIC_OVERVIEWS_RESEARCH_THEME_QID` | `Q0` | Research-theme class, usually `Q7266523` |
 | `TOPIC_OVERVIEWS_LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic` or `openai` |
 | `TOPIC_OVERVIEWS_MODEL_QID` | empty | KG model item used for `P1642` provenance and runtime model lookup via `P1966` |
