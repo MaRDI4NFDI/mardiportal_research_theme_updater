@@ -121,7 +121,8 @@ def _process_record(
         log.info("Generating TL;DR and keywords for %s (%s)", rid, record.title)
         tldr = summarize(record, model=model, api_key=config.anthropic_api_key, llm=llm)
         if not tldr:
-            raise PipelineError(f"No TL;DR generated for {rid} ({record.title!r})")
+            log.warning("Skipping %s (%s): LLM returned empty TL;DR", rid, record.title)
+            return False
         keywords = keyworder(record, model=model, api_key=config.anthropic_api_key, llm=llm)
         paper_qid = kg.import_paper(
             record, tldr=tldr, keywords=keywords, generated_by=config.model_qid or None,
