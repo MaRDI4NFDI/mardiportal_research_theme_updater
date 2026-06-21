@@ -1,0 +1,131 @@
+"""Harvest recent works from OpenAlex by query string.
+
+The query_str format mirrors URL params: ``search=mardi&filter=funders.id:f4320320879``.
+Supported keys: ``search``, ``filter``, ``sort``.
+The harvester appends ``from_publication_date:{cutoff}`` to the filter automatically
+and uses cursor-based pagination. When sorted by ``publication_date:desc`` (the
+default), iteration stops as soon as a result is older than the date window.
+"""
+from __future__ import annotations
+
+import datetime
+import logging
+import time
+from typing import Iterator
+from urllib.parse import parse_qs
+
+import requests
+
+from .arxiv_oai import PaperRecord
+
+OPENALEX_API_URL = "https://api.openalex.org/works"
+
+log = logging.getLogger(__name__)
+
+
+def _reconstruct_abstract(inv: dict | None) -> str:
+    if not inv:
+        return ""
+    positions: dict[int, str] = {}
+    for word, pos_list in inv.items():
+        for p in pos_list:
+            positions[p] = word
+    return " ".join(positions[k] for k in sorted(positions))
+
+
+def _strip_prefix(url: str, prefix: str) -> str:
+    return url[len(prefix):] if url and url.startswith(prefix) else (url or "")
+
+
+def parse_works_page(works: list[dict]) -> list[PaperRecord]:
+    records = []
+    for w in works:
+        ids = w.get("ids") or {}
+        arxiv_raw = ids.get("arxiv", "") or ""
+        arxiv_id = _strip_prefix(arxiv_raw, "https://arxiv.org/abs/").strip()
+        openalex_raw = w.get("id", "") or ""
+        openalex_id = openalex_raw.rstrip("/").rsplit("/", 1)[-1]
+        doi_raw = (w.get("doi") or ids.get("doi") or "")
+        doi = _strip_prefix(doi_raw, "https://doi.org/") or None
+        authors = [
+            (a.get("author") or {}).get("display_name", "")
+            for a in (w.get("authorships") or [])
+        ]
+        categories = [
+            t.get("display_name", "")
+            for t in (w.get("topics") or [])
+            if t.get("display_name")
+        ]
+        records.append(PaperRecord(
+            arxiv_id=arxiv_id,
+            title=(w.get("title") or "").strip(),
+            abstract=_reconstruct_abstract(w.get("abstract_inverted_index")),
+            authors=[a for a in authors if a],
+            categories=categories,
+            published=(w.get("publication_date") or "")[:10],
+            doi=doi,
+            openalex_id=openalex_id,
+        ))
+    return records
+
+
+def fetch_openalex_records(
+    query_str: str,
+    since_days: int,
+    *,
+    email: str = "",
+    page_size: int = 200,
+    session=None,
+    sleep=time.sleep,
+    today: datetime.date | None = None,
+) -> Iterator[PaperRecord]:
+    """Yield PaperRecords from OpenAlex matching ``query_str`` published within
+    ``since_days`` days. Uses cursor-based pagination; stops early when results
+    are sorted by publication_date:desc and a result falls outside the window."""
+    session = session or requests.Session()
+    cutoff = (today or datetime.date.today()) - datetime.timedelta(days=since_days)
+    cutoff_s = cutoff.isoformat()
+
+    parsed = parse_qs(query_str, keep_blank_values=True)
+    params: dict[str, str] = {k: v[0] for k, v in parsed.items()}
+
+    sort = params.pop("sort", "publication_date:desc")
+    early_stop = sort == "publication_date:desc"
+
+    user_filter = params.pop("filter", "")
+    date_filter = f"from_publication_date:{cutoff_s}"
+    params["filter"] = f"{user_filter},{date_filter}" if user_filter else date_filter
+    params["sort"] = sort
+    params["per_page"] = str(page_size)
+    if email:
+        params["mailto"] = email
+
+    cursor = "*"
+    while True:
+        params["cursor"] = cursor
+        log.info(
+            "Fetching OpenAlex results query=%r cursor=%r cutoff=%s",
+            query_str, cursor, cutoff_s,
+        )
+        resp = session.get(OPENALEX_API_URL, params=dict(params), timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        works = data.get("results") or []
+        log.info("Got %d OpenAlex results", len(works))
+        if not works:
+            return
+        for record in parse_works_page(works):
+            if early_stop and record.published and record.published < cutoff_s:
+                log.info(
+                    "Stopping OpenAlex at %s (%s): older than cutoff %s",
+                    record.record_id if (record.arxiv_id or record.openalex_id) else "?",
+                    record.published,
+                    cutoff_s,
+                )
+                return
+            yield record
+        next_cursor = (data.get("meta") or {}).get("next_cursor")
+        if not next_cursor:
+            return
+        cursor = next_cursor
+        sleep(1)  # OpenAlex polite pool
