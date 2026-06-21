@@ -50,7 +50,7 @@ Configuration is environment-variable first.
 | `TOPIC_OVERVIEWS_MODEL_QID` | empty | KG model item used for `P1642` provenance and runtime model lookup via `P1966` |
 | `TOPIC_OVERVIEWS_OPENAI_BASE_URL` | `https://ollama.zib.de/api` | OpenAI-compatible chat API base URL |
 | `TOPIC_OVERVIEWS_OPENAI_API_KEY` | empty | Bearer token for the OpenAI-compatible API |
-| `TOPIC_OVERVIEWS_HARVEST_LIMIT` | `0` | Max new papers considered; `0` means unlimited |
+| `TOPIC_OVERVIEWS_HARVEST_LIMIT` | `0` | Max new papers inserted into the KG; `0` means unlimited |
 | `TOPIC_OVERVIEWS_STATE_PATH` | `state.json` | Seen-ID state file |
 | `TOPIC_OVERVIEWS_DRY_RUN` | `false` | Classify without writing |
 | `ANTHROPIC_API_KEY` | empty | LLM API key |
@@ -74,6 +74,12 @@ The default harvest path uses the arXiv search API sorted by submission date,
 running one search per distinct theme query. `harvest/arxiv_oai.py` remains as
 tested OAI-PMH support and shared record model code, but it is not the current
 CLI harvest mode.
+
+To limit a run to a single new paper inserted into the KG, set:
+
+```bash
+TOPIC_OVERVIEWS_HARVEST_LIMIT=1
+```
 
 To use the ZIB OpenAI-compatible API:
 

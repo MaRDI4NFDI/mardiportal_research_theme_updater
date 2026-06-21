@@ -97,11 +97,13 @@ def harvest_step(
                             kg.link_topic(topic_qid, paper_qid)
                     imported += 1
                     imported_titles.append(record.title)
+                    if config.harvest_limit and imported >= config.harvest_limit:
+                        break
             except Exception as exc:
                 log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
-            if config.harvest_limit and considered >= config.harvest_limit:
+            if config.harvest_limit and imported >= config.harvest_limit:
                 break
-        if config.harvest_limit and considered >= config.harvest_limit:
+        if config.harvest_limit and imported >= config.harvest_limit:
             break
     # Purge each new paper's page so it renders fresh on the portal.
     if publisher is not None and not config.dry_run and imported_titles:
