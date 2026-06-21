@@ -176,7 +176,7 @@ def harvest_step(
             except PipelineError:
                 raise
             except Exception as exc:
-                log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
+                log.warning("Skipping paper %s due to error: %s", record.record_id, exc)
                 continue
             if did_import:
                 imported += 1
