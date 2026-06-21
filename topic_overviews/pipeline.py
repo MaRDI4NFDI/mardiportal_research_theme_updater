@@ -68,6 +68,8 @@ def harvest_step(
     model = model or config.model_qid
     for harvest_config in _harvest_configs(config, topics):
         covering = [t for t in topics if (t.arxiv_query or config.arxiv_query).strip() == harvest_config.arxiv_query]
+        for t in covering:
+            log.info("Processing theme: %s (%s)", t.label, t.qid)
         log.info(
             "Harvesting arXiv query %r for %d theme(s): %s",
             harvest_config.arxiv_query,
