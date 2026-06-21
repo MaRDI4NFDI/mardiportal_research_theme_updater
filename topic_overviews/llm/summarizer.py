@@ -1,7 +1,11 @@
 """Generate a one-sentence TL;DR for a paper using Claude."""
 from __future__ import annotations
 
+import logging
+
 from ..harvest.arxiv_oai import PaperRecord
+
+log = logging.getLogger(__name__)
 
 _SYSTEM = (
     "Write a two-sentence TL;DR (about 40-55 words total). The first sentence says "
@@ -27,12 +31,16 @@ def summarize_paper(
     prompt = f"{_SYSTEM}\n\nTITLE: {paper.title}\nABSTRACT: {paper.abstract}"
     try:
         if llm is not None:
-            return llm.complete(prompt, model=model, max_tokens=200).strip()
-        resp = client.messages.create(
-            model=model,
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return resp.content[0].text.strip()
-    except Exception:
+            text = llm.complete(prompt, model=model, max_tokens=200)
+        else:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = resp.content[0].text
+        log.info("TL;DR raw response: %s", text[:200])
+        return text.strip()
+    except Exception as exc:
+        log.warning("TL;DR generation failed: %s", exc)
         return ""

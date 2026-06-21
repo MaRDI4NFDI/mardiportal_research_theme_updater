@@ -18,6 +18,10 @@ from .wiki.page_builder import RESEARCH_THEME_STUB
 log = logging.getLogger(__name__)
 
 
+class PipelineError(Exception):
+    """Fatal pipeline error — should terminate the run."""
+
+
 def default_harvest(config: Config):
     """Default paper source: arXiv keyword search over a recent date window."""
     return search_records(config.arxiv_query, config.since_days)
@@ -62,7 +66,13 @@ def harvest_step(
     llm = llm or make_llm_client(config)
     model = model or config.model_qid
     for harvest_config in _harvest_configs(config, topics):
-        log.info("Harvesting arXiv query: %s", harvest_config.arxiv_query)
+        covering = [t for t in topics if (t.arxiv_query or config.arxiv_query).strip() == harvest_config.arxiv_query]
+        log.info(
+            "Harvesting arXiv query %r for %d theme(s): %s",
+            harvest_config.arxiv_query,
+            len(covering),
+            ", ".join(f"{t.label} ({t.qid})" for t in covering),
+        )
         for record in fetch(harvest_config):
             if record.arxiv_id in state.seen_ids:
                 continue
@@ -114,6 +124,10 @@ def harvest_step(
                             api_key=config.anthropic_api_key,
                             llm=llm,
                         )
+                        if not tldr:
+                            raise PipelineError(
+                                f"No TL;DR generated for {record.arxiv_id} ({record.title!r})"
+                            )
                         keywords = keyworder(
                             record,
                             model=model,
@@ -137,6 +151,8 @@ def harvest_step(
                     imported_titles.append(record.title)
                     if config.harvest_limit and imported >= config.harvest_limit:
                         break
+            except PipelineError:
+                raise
             except Exception as exc:
                 log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
             if config.harvest_limit and imported >= config.harvest_limit:

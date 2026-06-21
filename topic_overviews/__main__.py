@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import logging
+import sys
 
 from .config import load_config
 from .state import load_state, save_state
@@ -41,15 +42,22 @@ def main() -> None:
         arxiv_query_property=config.arxiv_query_property,
     )
     log.info("Loaded %d registered research themes", len(topics))
+    for t in topics:
+        log.info("  Theme %s: %s", t.qid, t.label)
 
     kg = None if config.dry_run else make_kg_client(config)
     publisher = None if config.dry_run else _make_publisher(config)
 
     if not args.themes_only:
         state = load_state(config.state_path)
-        imported = pipeline.harvest_step(
-            config, state, topics=topics, kg=kg, model=model, publisher=publisher
-        )
+        try:
+            imported = pipeline.harvest_step(
+                config, state, topics=topics, kg=kg, model=model, publisher=publisher
+            )
+        except pipeline.PipelineError as exc:
+            log.error("Pipeline terminated: %s", exc)
+            save_state(config.state_path, state)
+            sys.exit(1)
         log.info("Imported %d papers", imported)
         save_state(config.state_path, state)
 
