@@ -1,4 +1,5 @@
 import datetime
+import logging
 
 from topic_overviews.config import load_config
 from topic_overviews.state import State
@@ -56,6 +57,39 @@ def test_harvest_step_imports_only_matched_and_updates_state():
     assert kg.links == [("Q11", "Q999")]            # paper Q999 added to topic Q11 via P265
     assert state.seen_ids == {"2401.00001", "2401.00002"}
     assert state.last_harvest == datetime.date.today().isoformat()
+
+
+def test_harvest_step_logs_inserted_qids(caplog):
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    state = State()
+    kg = FakeKG()
+
+    def fake_fetch(config):
+        return iter([P1])
+
+    def fake_classify(paper, topics, *, model, api_key, **kwargs):
+        return ["Q11"]
+
+    kg.import_paper = lambda record, tldr=None, keywords=None, generated_by=None: "Q123"
+
+    with caplog.at_level(logging.INFO, logger="topic_overviews.pipeline"):
+        count = pipeline.harvest_step(
+            cfg,
+            state,
+            topics=TOPICS,
+            kg=kg,
+            model="test-model",
+            fetch=fake_fetch,
+            classify=fake_classify,
+            summarize=_summ("a short summary"),
+            keyworder=_kw(["A", "B"]),
+        )
+
+    assert count == 1
+    assert "Classifying arXiv paper 2401.00001 (Caching) with model test-model" in caplog.text
+    assert "Generating TL;DR and keywords for 2401.00001 (Caching)" in caplog.text
+    assert "Inserted arXiv paper 2401.00001 as KG item Q123" in caplog.text
+    assert "Harvest inserted 1 paper(s): Q123" in caplog.text
 
 
 def test_harvest_step_skips_seen_ids():

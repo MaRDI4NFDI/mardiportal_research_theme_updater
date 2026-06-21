@@ -58,6 +58,7 @@ def harvest_step(
     imported = 0
     considered = 0
     imported_titles: list[str] = []
+    imported_qids: list[str] = []
     llm = llm or make_llm_client(config)
     model = model or config.model_qid
     for harvest_config in _harvest_configs(config, topics):
@@ -68,6 +69,12 @@ def harvest_step(
             state.seen_ids.add(record.arxiv_id)
             considered += 1
             try:
+                log.info(
+                    "Classifying arXiv paper %s (%s) with model %s",
+                    record.arxiv_id,
+                    record.title,
+                    model,
+                )
                 matched = classify(
                     record,
                     topics,
@@ -75,8 +82,19 @@ def harvest_step(
                     api_key=config.anthropic_api_key,
                     llm=llm,
                 )
+                log.info(
+                    "Classified arXiv paper %s (%s) into %s",
+                    record.arxiv_id,
+                    record.title,
+                    matched or [],
+                )
                 if matched:
                     if not config.dry_run:
+                        log.info(
+                            "Generating TL;DR and keywords for %s (%s)",
+                            record.arxiv_id,
+                            record.title,
+                        )
                         tldr = summarize(
                             record,
                             model=model,
@@ -93,8 +111,15 @@ def harvest_step(
                             record, tldr=tldr, keywords=keywords,
                             generated_by=config.model_qid or None,
                         )
+                        imported_qids.append(paper_qid)
+                        log.info(
+                            "Inserted arXiv paper %s as KG item %s",
+                            record.arxiv_id,
+                            paper_qid,
+                        )
                         for topic_qid in matched:
                             kg.link_topic(topic_qid, paper_qid)
+                            log.info("Linked %s to theme %s", paper_qid, topic_qid)
                     imported += 1
                     imported_titles.append(record.title)
                     if config.harvest_limit and imported >= config.harvest_limit:
@@ -109,6 +134,10 @@ def harvest_step(
     if publisher is not None and not config.dry_run and imported_titles:
         publisher.purge(imported_titles)
     state.last_harvest = datetime.date.today().isoformat()
+    if imported_qids:
+        log.info("Harvest inserted %d paper(s): %s", imported, ", ".join(imported_qids))
+    else:
+        log.info("Harvest inserted 0 papers")
     return imported
 
 

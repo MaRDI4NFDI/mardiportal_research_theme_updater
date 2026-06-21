@@ -1,4 +1,5 @@
 import datetime
+import logging
 
 from topic_overviews.harvest.arxiv_oai import PaperRecord
 from topic_overviews.harvest.arxiv_search import parse_atom, search_records
@@ -67,3 +68,19 @@ def test_search_stops_at_window_boundary():
     assert len(session.calls) == 1                       # stopped before paging
     assert session.calls[0]["sortBy"] == "submittedDate"
     assert session.calls[0]["sortOrder"] == "descending"
+
+
+def test_search_logs_fetch_and_result_count(caplog):
+    session = FakeSession([ATOM])
+    with caplog.at_level(logging.INFO, logger="topic_overviews.harvest.arxiv_search"):
+        list(
+            search_records(
+                "cat:math.NA",
+                since_days=10,
+                session=session,
+                sleep=lambda s: None,
+                today=datetime.date(2026, 6, 21),
+            )
+        )
+    assert "Fetching arXiv results for query='cat:math.NA' start=0 page_size=100 cutoff=2026-06-11" in caplog.text
+    assert "Got 2 arXiv results for query='cat:math.NA'" in caplog.text

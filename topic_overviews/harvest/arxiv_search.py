@@ -8,6 +8,7 @@ a keyword query, and stops once papers fall outside the date window.
 from __future__ import annotations
 
 import datetime
+import logging
 import re
 import time
 from typing import Iterator
@@ -66,10 +67,18 @@ def search_records(
     last ``since_days`` days. Stops as soon as a paper is older than the window
     (results are sorted by submission date descending)."""
     session = session or requests.Session()
+    log = logging.getLogger(__name__)
     cutoff = (today or datetime.date.today()) - datetime.timedelta(days=since_days)
     cutoff_s = cutoff.isoformat()
     start = 0
     while True:
+        log.info(
+            "Fetching arXiv results for query=%r start=%d page_size=%d cutoff=%s",
+            query,
+            start,
+            page_size,
+            cutoff_s,
+        )
         resp = session.get(
             ARXIV_API_URL,
             params={
@@ -83,10 +92,17 @@ def search_records(
         )
         resp.raise_for_status()
         records = parse_atom(resp.text)
+        log.info("Got %d arXiv results for query=%r", len(records), query)
         if not records:
             return
         for r in records:
             if r.published and r.published < cutoff_s:
+                log.info(
+                    "Stopping arXiv query=%r at %s because it is older than cutoff %s",
+                    query,
+                    r.arxiv_id,
+                    cutoff_s,
+                )
                 return  # everything after this is older too
             yield r
         start += page_size
