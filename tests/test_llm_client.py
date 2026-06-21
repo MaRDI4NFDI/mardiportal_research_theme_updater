@@ -5,7 +5,7 @@ import pytest
 from topic_overviews.config import load_config
 from topic_overviews.llm.client import (
     AnthropicLLMClient,
-    OllamaLLMClient,
+    OpenAICompatibleLLMClient,
     make_llm_client,
 )
 
@@ -29,7 +29,7 @@ def test_anthropic_llm_client_returns_text():
     assert messages.calls == [("m", 12, [{"role": "user", "content": "prompt"}])]
 
 
-def test_ollama_llm_client_posts_generate_request():
+def test_openai_compatible_llm_client_posts_chat_completion_request():
     captured = {}
 
     class FakeResp:
@@ -37,10 +37,15 @@ def test_ollama_llm_client_posts_generate_request():
             pass
 
         def json(self):
-            return {"response": "local answer"}
+            return {
+                "choices": [
+                    {"message": {"content": "local answer"}}
+                ]
+            }
 
-    def fake_post(url, *, json, timeout):
+    def fake_post(url, *, headers, json, timeout):
         captured["url"] = url
+        captured["headers"] = headers
         captured["json"] = json
         captured["timeout"] = timeout
         return FakeResp()
@@ -50,17 +55,22 @@ def test_ollama_llm_client_posts_generate_request():
     original_post = client_module.requests.post
     client_module.requests.post = fake_post
     try:
-        client = OllamaLLMClient(base_url="http://ollama:11434/")
+        client = OpenAICompatibleLLMClient(
+            base_url="https://ollama.zib.de/api",
+            api_key="secret",
+        )
         assert client.complete("prompt", model="llama", max_tokens=7) == "local answer"
     finally:
         client_module.requests.post = original_post
 
-    assert captured["url"] == "http://ollama:11434/api/generate"
+    assert captured["url"] == "https://ollama.zib.de/api/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer secret"
     assert captured["json"] == {
         "model": "llama",
-        "prompt": "prompt",
+        "messages": [{"role": "user", "content": "prompt"}],
+        "max_tokens": 7,
+        "temperature": 0,
         "stream": False,
-        "options": {"num_predict": 7, "temperature": 0},
     }
     assert captured["timeout"] == 300
 
@@ -71,12 +81,13 @@ def test_make_llm_client_selects_provider():
         make_llm_client(
             load_config(
                 {
-                    "TOPIC_OVERVIEWS_LLM_PROVIDER": "ollama",
-                    "TOPIC_OVERVIEWS_OLLAMA_URL": "http://localhost:11434",
+                    "TOPIC_OVERVIEWS_LLM_PROVIDER": "openai",
+                    "TOPIC_OVERVIEWS_OPENAI_BASE_URL": "https://ollama.zib.de/api",
+                    "TOPIC_OVERVIEWS_OPENAI_API_KEY": "secret",
                 }
             )
         ),
-        OllamaLLMClient,
+        OpenAICompatibleLLMClient,
     )
 
 

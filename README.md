@@ -46,9 +46,10 @@ Configuration is environment-variable first.
 | `TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY` | `P1965` | Theme-item property containing an arXiv search query |
 | `TOPIC_OVERVIEWS_SINCE_DAYS` | `10` | Search window in days |
 | `TOPIC_OVERVIEWS_RESEARCH_THEME_QID` | `Q0` | Research-theme class, usually `Q7266523` |
-| `TOPIC_OVERVIEWS_LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic` or `ollama` |
+| `TOPIC_OVERVIEWS_LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic` or `openai` |
 | `TOPIC_OVERVIEWS_MODEL_QID` | empty | KG model item used for `P1642` provenance and runtime model lookup via `P1966` |
-| `TOPIC_OVERVIEWS_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL when using `ollama` |
+| `TOPIC_OVERVIEWS_OPENAI_BASE_URL` | `https://ollama.zib.de/api` | OpenAI-compatible chat API base URL |
+| `TOPIC_OVERVIEWS_OPENAI_API_KEY` | empty | Bearer token for the OpenAI-compatible API |
 | `TOPIC_OVERVIEWS_HARVEST_LIMIT` | `0` | Max new papers considered; `0` means unlimited |
 | `TOPIC_OVERVIEWS_STATE_PATH` | `state.json` | Seen-ID state file |
 | `TOPIC_OVERVIEWS_DRY_RUN` | `false` | Classify without writing |
@@ -74,10 +75,11 @@ running one search per distinct theme query. `harvest/arxiv_oai.py` remains as
 tested OAI-PMH support and shared record model code, but it is not the current
 CLI harvest mode.
 
-To use a local Ollama model:
+To use the ZIB OpenAI-compatible API:
 
 ```bash
-TOPIC_OVERVIEWS_LLM_PROVIDER=ollama
-TOPIC_OVERVIEWS_MODEL_QID=<KG item with P1966=llama3.1:8b>
-TOPIC_OVERVIEWS_OLLAMA_URL=http://localhost:11434
+TOPIC_OVERVIEWS_LLM_PROVIDER=openai
+TOPIC_OVERVIEWS_MODEL_QID=<KG item with P1966=llama3.2:latest>
+TOPIC_OVERVIEWS_OPENAI_BASE_URL=https://ollama.zib.de/api
+TOPIC_OVERVIEWS_OPENAI_API_KEY=<token>
 ```

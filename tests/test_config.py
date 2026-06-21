@@ -13,7 +13,8 @@ def test_load_config_reads_env_and_defaults():
     assert cfg.dry_run is True
     assert cfg.arxiv_query_property == "P1965"
     assert cfg.llm_provider == "anthropic"
-    assert cfg.ollama_url == "http://localhost:11434"
+    assert cfg.openai_base_url == "https://ollama.zib.de/api"
+    assert cfg.openai_api_key == ""
 
 
 def test_dry_run_defaults_false():

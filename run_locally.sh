@@ -74,8 +74,8 @@ fi
 
 llm_provider="${TOPIC_OVERVIEWS_LLM_PROVIDER:-anthropic}"
 llm_provider="${llm_provider,,}"
-if [[ "$llm_provider" != "anthropic" && "$llm_provider" != "ollama" ]]; then
-    echo "ERROR: TOPIC_OVERVIEWS_LLM_PROVIDER must be 'anthropic' or 'ollama'." >&2
+if [[ "$llm_provider" != "anthropic" && "$llm_provider" != "openai" ]]; then
+    echo "ERROR: TOPIC_OVERVIEWS_LLM_PROVIDER must be 'anthropic' or 'openai'." >&2
     exit 1
 fi
 
@@ -87,8 +87,9 @@ if [[ "$themes_only" == false && "$llm_provider" == "anthropic" ]]; then
     require_var "ANTHROPIC_API_KEY"
 fi
 
-if [[ "$themes_only" == false && "$llm_provider" == "ollama" ]]; then
-    require_var "TOPIC_OVERVIEWS_OLLAMA_URL"
+if [[ "$themes_only" == false && "$llm_provider" == "openai" ]]; then
+    require_var "TOPIC_OVERVIEWS_OPENAI_BASE_URL"
+    require_var "TOPIC_OVERVIEWS_OPENAI_API_KEY"
 fi
 
 if (( ${#missing[@]} > 0 )); then

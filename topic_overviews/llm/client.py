@@ -33,31 +33,43 @@ class AnthropicLLMClient:
 
 
 @dataclass
-class OllamaLLMClient:
-    base_url: str = "http://localhost:11434"
+class OpenAICompatibleLLMClient:
+    base_url: str
+    api_key: str
 
     def complete(self, prompt: str, *, model: str, max_tokens: int) -> str:
         resp = requests.post(
-            f"{self.base_url.rstrip('/')}/api/generate",
+            f"{self.base_url.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
             json={
                 "model": model,
-                "prompt": prompt,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0,
                 "stream": False,
-                "options": {
-                    "num_predict": max_tokens,
-                    "temperature": 0,
-                },
             },
             timeout=300,
         )
         resp.raise_for_status()
-        return resp.json().get("response", "")
+        data = resp.json()
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        message = choices[0].get("message") or {}
+        content = message.get("content", "")
+        return content if isinstance(content, str) else str(content)
 
 
 def make_llm_client(config) -> LLMClient:
     provider = config.llm_provider.strip().lower()
     if provider == "anthropic":
         return AnthropicLLMClient(api_key=config.anthropic_api_key)
-    if provider == "ollama":
-        return OllamaLLMClient(base_url=config.ollama_url)
+    if provider == "openai":
+        return OpenAICompatibleLLMClient(
+            base_url=config.openai_base_url,
+            api_key=config.openai_api_key,
+        )
     raise ValueError(f"Unsupported LLM provider: {config.llm_provider}")
