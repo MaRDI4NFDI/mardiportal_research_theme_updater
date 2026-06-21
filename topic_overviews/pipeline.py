@@ -157,6 +157,8 @@ def harvest_step(
                                 topic_label.get(topic_qid, topic_qid),
                                 topic_qid,
                             )
+                            if config.theme_max_papers:
+                                kg.enforce_theme_limit(topic_qid, config.theme_max_papers)
                     imported += 1
                     query_imported += 1
                     imported_titles.append(record.title)

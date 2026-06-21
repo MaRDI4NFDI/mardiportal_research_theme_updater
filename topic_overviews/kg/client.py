@@ -6,6 +6,9 @@ topic, so the canonical paper entity is never polluted by this feature.
 """
 from __future__ import annotations
 
+import logging
+import requests
+
 from wikibaseintegrator.datatypes import Item as WBItem
 from wikibaseintegrator.models import Qualifiers
 
@@ -13,15 +16,52 @@ from ..harvest.arxiv_oai import PaperRecord
 from . import model as M
 from .author_resolver import AuthorResolver
 
+log = logging.getLogger(__name__)
+
 
 def to_wbi_time(date: str) -> str:
     return f"+{date}T00:00:00Z"
 
 
 class KGClient:
-    def __init__(self, mc, author_resolver: AuthorResolver | None = None):
+    def __init__(
+        self,
+        mc,
+        author_resolver: AuthorResolver | None = None,
+        api_url: str = "",
+        bot_user: str = "",
+        bot_password: str = "",
+    ):
         self.mc = mc
         self.author_resolver = author_resolver
+        self._api_url = api_url
+        self._bot_user = bot_user
+        self._bot_password = bot_password
+        self._session: requests.Session | None = None
+
+    def _get_session(self) -> requests.Session:
+        if self._session is None:
+            s = requests.Session()
+            lt = s.get(
+                self._api_url,
+                params={"action": "query", "meta": "tokens", "type": "login", "format": "json"},
+                timeout=30,
+            ).json()["query"]["tokens"]["logintoken"]
+            s.post(
+                self._api_url,
+                data={"action": "login", "lgname": self._bot_user, "lgpassword": self._bot_password,
+                      "lgtoken": lt, "format": "json"},
+                timeout=30,
+            )
+            self._session = s
+        return self._session
+
+    def _csrf(self) -> str:
+        return self._get_session().get(
+            self._api_url,
+            params={"action": "query", "meta": "tokens", "format": "json"},
+            timeout=30,
+        ).json()["query"]["tokens"]["csrftoken"]
 
     def get_paper_qid(self, arxiv_id: str) -> str | None:
         """Return the QID of the canonical paper item for ``arxiv_id`` if it exists."""
@@ -96,6 +136,65 @@ class KGClient:
         topic_item.add_claim(M.P_HAS_PART, value=paper_qid)
         topic_item.write()
 
+    def enforce_theme_limit(self, topic_qid: str, max_papers: int) -> int:
+        """Unlink the oldest papers from a theme when it exceeds *max_papers*.
+
+        Fetches all P265 claims on the theme, resolves publication dates (P28)
+        for each linked paper, sorts oldest-first, and removes via wbremoveclaims
+        until the count is at or below the limit. Returns the number removed.
+        """
+        if max_papers <= 0 or not self._api_url:
+            return 0
+        s = self._get_session()
+        resp = s.get(
+            self._api_url,
+            params={"action": "wbgetentities", "ids": topic_qid, "props": "claims", "format": "json"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        p265 = resp.json()["entities"][topic_qid].get("claims", {}).get(M.P_HAS_PART, [])
+        if len(p265) <= max_papers:
+            return 0
+
+        # Map paper QID -> claim GUID
+        paper_guids: dict[str, str] = {}
+        for c in p265:
+            qid = (c.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id")
+            if qid:
+                paper_guids[qid] = c["id"]
+
+        # Batch-fetch publication dates
+        paper_qids = list(paper_guids)
+        dates: dict[str, str] = {}
+        for i in range(0, len(paper_qids), 50):
+            batch = paper_qids[i : i + 50]
+            r = s.get(
+                self._api_url,
+                params={"action": "wbgetentities", "ids": "|".join(batch), "props": "claims", "format": "json"},
+                timeout=60,
+            )
+            for pqid, entity in r.json()["entities"].items():
+                p28 = entity.get("claims", {}).get(M.P_PUBLICATION_DATE, [])
+                dates[pqid] = p28[0]["mainsnak"]["datavalue"]["value"]["time"] if p28 else ""
+
+        # Oldest first
+        to_remove = sorted(paper_qids, key=lambda q: dates.get(q, ""))[: len(paper_qids) - max_papers]
+        guids = [paper_guids[q] for q in to_remove]
+        r = s.post(
+            self._api_url,
+            data={"action": "wbremoveclaims", "claim": "|".join(guids),
+                  "token": self._csrf(), "format": "json", "bot": "1"},
+            timeout=60,
+        )
+        if r.json().get("success"):
+            log.info(
+                "Theme %s: unlinked %d oldest paper(s) to enforce limit of %d",
+                topic_qid, len(guids), max_papers,
+            )
+            return len(guids)
+        log.warning("Theme %s: wbremoveclaims failed: %s", topic_qid, r.json().get("error"))
+        return 0
+
     def get_theme_sitelink(self, theme_qid: str) -> str | None:
         """Return the wiki page title the theme item is connected to (``mardi``
         sitelink), or None if the item has no connected page yet."""
@@ -122,4 +221,10 @@ def make_kg_client(config) -> KGClient:
         wikibase_url=config.wikibase_url,
     )
     resolver = AuthorResolver(config.mediawiki_api_url)
-    return KGClient(mc, author_resolver=resolver)
+    return KGClient(
+        mc,
+        author_resolver=resolver,
+        api_url=config.mediawiki_api_url,
+        bot_user=config.mediawiki_bot_user,
+        bot_password=config.mediawiki_bot_password,
+    )

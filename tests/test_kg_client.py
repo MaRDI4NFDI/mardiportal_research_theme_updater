@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 from topic_overviews.harvest.arxiv_oai import PaperRecord
 from topic_overviews.kg.client import KGClient, to_wbi_time
 
@@ -181,3 +183,84 @@ def test_set_theme_sitelink_sets_mardi_site_and_writes():
     KGClient(mc).set_theme_sitelink("Q11", "My Theme Page")
     assert theme.sitelinks.set_calls == [("mardi", "My Theme Page")]
     assert theme.written is True
+
+
+def _make_p265_entities(paper_date_pairs: list[tuple[str, str]]) -> dict:
+    """Build a fake wbgetentities response for a theme with P265 links."""
+    p265 = [
+        {
+            "id": f"Q9999${qid}",
+            "mainsnak": {"datavalue": {"value": {"id": qid}}},
+        }
+        for qid, _ in paper_date_pairs
+    ]
+    return {"entities": {"Q9999": {"claims": {"P265": p265}}}}
+
+
+def _make_paper_entities(paper_date_pairs: list[tuple[str, str]]) -> dict:
+    """Build a fake wbgetentities response mapping paper QIDs to their P28 dates."""
+    entities = {}
+    for qid, date in paper_date_pairs:
+        entities[qid] = {
+            "claims": {
+                "P28": [{"mainsnak": {"datavalue": {"value": {"time": date}}}}]
+            } if date else {}
+        }
+    return {"entities": entities}
+
+
+def _mock_session(theme_response, papers_response, remove_success=True) -> MagicMock:
+    """Session mock where _session is pre-set (no login calls needed)."""
+    s = MagicMock()
+    csrf_resp = MagicMock()
+    csrf_resp.json.return_value = {"query": {"tokens": {"csrftoken": "csrf"}}}
+    theme_resp = MagicMock()
+    theme_resp.raise_for_status = MagicMock()
+    theme_resp.json.return_value = theme_response
+    papers_resp = MagicMock()
+    papers_resp.raise_for_status = MagicMock()
+    papers_resp.json.return_value = papers_response
+    remove_resp = MagicMock()
+    remove_resp.json.return_value = {"success": 1} if remove_success else {"error": "fail"}
+
+    # get calls: theme entities, paper entities, csrf token
+    s.get.side_effect = [theme_resp, papers_resp, csrf_resp]
+    s.post.side_effect = [remove_resp]
+    return s
+
+
+class TestEnforceThemeLimit:
+    def _client(self, session) -> KGClient:
+        mc = FakeMC()
+        client = KGClient(mc, api_url="https://example.org/api", bot_user="bot", bot_password="pw")
+        client._session = session
+        return client
+
+    def test_no_op_when_under_limit(self):
+        pairs = [("Q1", "2024-01-01"), ("Q2", "2024-02-01")]
+        session = MagicMock()
+        theme_resp = MagicMock()
+        theme_resp.raise_for_status = MagicMock()
+        theme_resp.json.return_value = _make_p265_entities(pairs)
+        session.get.return_value = theme_resp
+        client = self._client(session)
+        assert client.enforce_theme_limit("Q9999", max_papers=5) == 0
+        session.post.assert_not_called()
+
+    def test_removes_oldest_when_over_limit(self):
+        pairs = [("Q1", "+2024-01-01T00:00:00Z"), ("Q2", "+2024-06-01T00:00:00Z"), ("Q3", "+2024-03-01T00:00:00Z")]
+        session = _mock_session(_make_p265_entities(pairs), _make_paper_entities(pairs))
+        client = self._client(session)
+        removed = client.enforce_theme_limit("Q9999", max_papers=2)
+        assert removed == 1
+        # wbremoveclaims should have been called with Q1's GUID (oldest)
+        post_call = session.post.call_args
+        assert "Q9999$Q1" in post_call.kwargs.get("data", {}).get("claim", "")
+
+    def test_no_op_when_max_papers_zero(self):
+        client = KGClient(FakeMC(), api_url="https://example.org/api")
+        assert client.enforce_theme_limit("Q9999", max_papers=0) == 0
+
+    def test_no_op_when_api_url_not_set(self):
+        client = KGClient(FakeMC())
+        assert client.enforce_theme_limit("Q9999", max_papers=10) == 0
