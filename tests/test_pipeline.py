@@ -36,6 +36,8 @@ class FakeKG:
         return self.paper_qids.get(arxiv_id)
     def paper_has_tldr(self, paper_qid):
         return paper_qid in self.paper_tldrs
+    def enforce_theme_limit(self, topic_qid, max_papers):
+        return 0
 
 
 def _summ(text="tl;dr"):
