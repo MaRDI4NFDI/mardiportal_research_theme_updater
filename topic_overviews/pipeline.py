@@ -76,6 +76,7 @@ def harvest_step(
             len(covering),
             ", ".join(f"{t.label} ({t.qid})" for t in covering),
         )
+        query_imported = 0
         for record in fetch(harvest_config):
             if record.arxiv_id in state.seen_ids:
                 continue
@@ -157,17 +158,16 @@ def harvest_step(
                                 topic_qid,
                             )
                     imported += 1
+                    query_imported += 1
                     imported_titles.append(record.title)
-                    if config.harvest_limit and imported >= config.harvest_limit:
+                    if config.harvest_limit and query_imported >= config.harvest_limit:
                         break
             except PipelineError:
                 raise
             except Exception as exc:
                 log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
-            if config.harvest_limit and imported >= config.harvest_limit:
+            if config.harvest_limit and query_imported >= config.harvest_limit:
                 break
-        if config.harvest_limit and imported >= config.harvest_limit:
-            break
     # Purge each new paper's page so it renders fresh on the portal.
     if publisher is not None and not config.dry_run and imported_titles:
         publisher.purge(imported_titles)
