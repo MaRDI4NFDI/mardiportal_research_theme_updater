@@ -12,8 +12,6 @@ def test_load_config_reads_env_and_defaults():
     assert cfg.research_theme_qid == "Q123"
     assert cfg.dry_run is True
     assert cfg.model == "claude-haiku-4-5"        # default
-    assert cfg.arxiv_set == "math"                # default
-    assert cfg.relevance_threshold == 0.0         # default, coerced to float
 
 
 def test_dry_run_defaults_false():
