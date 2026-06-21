@@ -11,9 +11,10 @@ from the KG.
 ## Data model
 
 Research themes are Wikibase items with `P31 -> Q7266523`. Each theme can carry
-an arXiv search query in the string property configured by
-`TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY`. Paper membership is stored on the theme,
-not on the paper:
+an arXiv search query (`P1965`) and/or an OpenAlex query string (`P1967`),
+configured via `TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY` and
+`TOPIC_OVERVIEWS_OPENALEX_QUERY_PROPERTY`. Paper membership is stored on the
+theme, not on the paper:
 
 ```text
 Q_theme --P265 has part(s)--> Q_paper
@@ -44,6 +45,8 @@ Configuration is environment-variable first.
 | --- | --- | --- |
 | `TOPIC_OVERVIEWS_ARXIV_QUERY` | empty | Fallback arXiv search query for themes without a KG query |
 | `TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY` | `P1965` | Theme-item property containing an arXiv search query |
+| `TOPIC_OVERVIEWS_OPENALEX_QUERY_PROPERTY` | empty | Theme-item property containing an OpenAlex query string (`P1967`) |
+| `TOPIC_OVERVIEWS_OPENALEX_EMAIL` | empty | Email passed to OpenAlex polite pool (`mailto` param) |
 | `TOPIC_OVERVIEWS_SINCE_DAYS` | `10` | Search window in days |
 | `TOPIC_OVERVIEWS_RESEARCH_THEME_QID` | `Q0` | Research-theme class, usually `Q7266523` |
 | `TOPIC_OVERVIEWS_LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic` or `openai` |
