@@ -94,6 +94,20 @@ def test_import_new_paper_writes_only_paper_statements():
     assert not any(prop == "P30" for prop, _ in item.claims)
 
 
+def test_import_paper_sets_tldr_when_given():
+    item = FakeItem()
+    mc = FakeMC(existing=[], item=item)
+    KGClient(mc).import_paper(PAPER, tldr="A one-sentence summary.")
+    assert ("P1963", "A one-sentence summary.") in item.claims
+
+
+def test_import_paper_without_tldr_sets_no_tldr_claim():
+    item = FakeItem()
+    mc = FakeMC(existing=[], item=item)
+    KGClient(mc).import_paper(PAPER)
+    assert not any(prop == "P1963" for prop, _ in item.claims)
+
+
 def test_import_existing_paper_reuses_item():
     item = FakeItem()
     mc = FakeMC(existing=["Q500"], item=item)

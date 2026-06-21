@@ -18,10 +18,11 @@ class KGClient:
     def __init__(self, mc):
         self.mc = mc
 
-    def import_paper(self, record: PaperRecord) -> str:
+    def import_paper(self, record: PaperRecord, tldr: str | None = None) -> str:
         """Upsert the canonical paper item (idempotent by arXiv ID). Returns its QID.
 
-        Writes only paper-intrinsic statements; nothing about topics.
+        Writes only paper-intrinsic statements; nothing about topics. ``tldr`` is
+        an optional one-sentence AI summary stored on the paper.
         """
         # NOTE: use BARE local MaRDI PIDs/QIDs. A "wdt:"/"wd:" prefix makes
         # mardiclient interpret the id as a *Wikidata* one and remote-map it,
@@ -45,6 +46,8 @@ class KGClient:
             item.add_claim(M.P_ARXIV_CLASSIFICATION, value=cat)
         for name in record.authors:
             item.add_claim(M.P_AUTHOR_NAME_STRING, value=name)
+        if tldr:
+            item.add_claim(M.P_TLDR, value=tldr)
 
         return item.write().id
 

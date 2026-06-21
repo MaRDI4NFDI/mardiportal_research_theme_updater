@@ -13,12 +13,16 @@ P2 = PaperRecord("2401.00002", "Unrelated", "abs", ["X"], ["math.AG"], "2024-01-
 
 class FakeKG:
     def __init__(self):
-        self.imported = []
+        self.imported = []        # (arxiv_id, tldr)
         self.links = []
-    def import_paper(self, record):
-        self.imported.append(record.arxiv_id); return "Q999"
+    def import_paper(self, record, tldr=None):
+        self.imported.append((record.arxiv_id, tldr)); return "Q999"
     def link_topic(self, topic_qid, paper_qid):
         self.links.append((topic_qid, paper_qid))
+
+
+def _summ(text="tl;dr"):
+    return lambda paper, *a, **k: text
 
 
 def test_harvest_step_imports_only_matched_and_updates_state():
@@ -31,9 +35,10 @@ def test_harvest_step_imports_only_matched_and_updates_state():
         return ["Q11"] if paper.arxiv_id == "2401.00001" else []
 
     count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
-                                  fetch=fake_fetch, classify=fake_classify)
+                                  fetch=fake_fetch, classify=fake_classify,
+                                  summarize=_summ("a short summary"))
     assert count == 1
-    assert kg.imported == ["2401.00001"]
+    assert kg.imported == [("2401.00001", "a short summary")]   # tldr passed through
     assert kg.links == [("Q11", "Q999")]            # paper Q999 added to topic Q11 via P265
     assert state.seen_ids == {"2401.00001", "2401.00002"}
     assert state.last_harvest == datetime.date.today().isoformat()
@@ -75,7 +80,7 @@ def test_harvest_step_respects_harvest_limit():
         return ["Q11"]
 
     pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
-                          fetch=fake_fetch, classify=fake_classify)
+                          fetch=fake_fetch, classify=fake_classify, summarize=_summ())
     # only the first 2 new papers are considered/classified; the 3rd is never reached
     assert calls == ["2401.00001", "2401.00002"]
     assert state.seen_ids == {"2401.00001", "2401.00002"}
@@ -94,7 +99,7 @@ def test_harvest_step_purges_imported_paper_pages():
     pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
                           fetch=lambda config: iter([P1, P2]),
                           classify=lambda paper, *a, **k: ["Q11"] if paper.arxiv_id == "2401.00001" else [],
-                          publisher=pub)
+                          summarize=_summ(), publisher=pub)
     # only the matched/imported paper's page title is purged
     assert pub.purged == ["Caching"]
 
@@ -111,9 +116,9 @@ def test_harvest_step_isolates_failing_paper():
         raise RuntimeError("classify exploded")
 
     count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
-                                  fetch=fake_fetch, classify=fake_classify)
+                                  fetch=fake_fetch, classify=fake_classify, summarize=_summ())
     assert count == 1
-    assert kg.imported == ["2401.00001"]
+    assert kg.imported == [("2401.00001", "tl;dr")]
     assert kg.links == [("Q11", "Q999")]
     assert "2401.00001" in state.seen_ids
     assert "2401.00002" in state.seen_ids
