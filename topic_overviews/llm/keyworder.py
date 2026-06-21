@@ -30,11 +30,11 @@ def keywords_paper(
     prompt = f"{_SYSTEM}\n\nTITLE: {paper.title}\nABSTRACT: {paper.abstract}"
     try:
         if llm is not None:
-            text = llm.complete(prompt, model=model, max_tokens=128)
+            text = llm.complete(prompt, model=model, max_tokens=4096)
         else:
             resp = client.messages.create(
                 model=model,
-                max_tokens=128,
+                max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
             )
             text = resp.content[0].text

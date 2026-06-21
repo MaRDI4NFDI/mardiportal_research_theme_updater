@@ -51,11 +51,11 @@ def classify_paper(
 
     for _ in range(2):
         if llm is not None:
-            text = llm.complete(prompt, model=model, max_tokens=512)
+            text = llm.complete(prompt, model=model, max_tokens=4096)
         else:
             resp = client.messages.create(
                 model=model,
-                max_tokens=512,
+                max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
             )
             text = resp.content[0].text

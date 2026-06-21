@@ -50,6 +50,9 @@ class OpenAICompatibleLLMClient:
                 "max_tokens": max_tokens,
                 "temperature": 0,
                 "stream": False,
+                # Ollama-specific: extend context window for reasoning models
+                # whose chain-of-thought can exhaust the default 8192-token limit
+                "options": {"num_ctx": 32768},
             },
             timeout=300,
         )
