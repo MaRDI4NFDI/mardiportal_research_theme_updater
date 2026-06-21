@@ -9,6 +9,7 @@ from .config import load_config
 from .state import load_state, save_state
 from .kg.topics import load_registered_topics
 from .kg.client import make_kg_client
+from .kg.model_items import get_llm_model_identifier
 from .wiki.publisher import WikiPublisher
 from . import pipeline
 
@@ -30,6 +31,10 @@ def main() -> None:
     if args.dry_run:
         config = dataclasses.replace(config, dry_run=True)
 
+    model = ""
+    if not args.themes_only:
+        model = get_llm_model_identifier(config.mediawiki_api_url, config.model_qid)
+
     topics = load_registered_topics(
         config.sparql_endpoint_url,
         config.research_theme_qid,
@@ -43,7 +48,7 @@ def main() -> None:
     if not args.themes_only:
         state = load_state(config.state_path)
         imported = pipeline.harvest_step(
-            config, state, topics=topics, kg=kg, publisher=publisher
+            config, state, topics=topics, kg=kg, model=model, publisher=publisher
         )
         log.info("Imported %d papers", imported)
         save_state(config.state_path, state)

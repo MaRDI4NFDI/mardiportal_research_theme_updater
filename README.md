@@ -46,8 +46,9 @@ Configuration is environment-variable first.
 | `TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY` | `P1965` | Theme-item property containing an arXiv search query |
 | `TOPIC_OVERVIEWS_SINCE_DAYS` | `10` | Search window in days |
 | `TOPIC_OVERVIEWS_RESEARCH_THEME_QID` | `Q0` | Research-theme class, usually `Q7266523` |
-| `TOPIC_OVERVIEWS_MODEL` | `claude-haiku-4-5` | Anthropic model for classify/summarize/keywords |
-| `TOPIC_OVERVIEWS_MODEL_QID` | empty | KG item for the model used as `P1642` provenance |
+| `TOPIC_OVERVIEWS_LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic` or `ollama` |
+| `TOPIC_OVERVIEWS_MODEL_QID` | empty | KG model item used for `P1642` provenance and runtime model lookup via `P1966` |
+| `TOPIC_OVERVIEWS_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL when using `ollama` |
 | `TOPIC_OVERVIEWS_HARVEST_LIMIT` | `0` | Max new papers considered; `0` means unlimited |
 | `TOPIC_OVERVIEWS_STATE_PATH` | `state.json` | Seen-ID state file |
 | `TOPIC_OVERVIEWS_DRY_RUN` | `false` | Classify without writing |
@@ -72,3 +73,11 @@ The default harvest path uses the arXiv search API sorted by submission date,
 running one search per distinct theme query. `harvest/arxiv_oai.py` remains as
 tested OAI-PMH support and shared record model code, but it is not the current
 CLI harvest mode.
+
+To use a local Ollama model:
+
+```bash
+TOPIC_OVERVIEWS_LLM_PROVIDER=ollama
+TOPIC_OVERVIEWS_MODEL_QID=<KG item with P1966=llama3.1:8b>
+TOPIC_OVERVIEWS_OLLAMA_URL=http://localhost:11434
+```

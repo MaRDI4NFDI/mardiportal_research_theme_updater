@@ -39,8 +39,9 @@ def classify_paper(
     model: str,
     api_key: str,
     client=None,
+    llm=None,
 ) -> list[str]:
-    if client is None:
+    if llm is None and client is None:
         from anthropic import Anthropic
 
         client = Anthropic(api_key=api_key)
@@ -49,12 +50,15 @@ def classify_paper(
     prompt = _build_prompt(paper, topics)
 
     for _ in range(2):
-        resp = client.messages.create(
-            model=model,
-            max_tokens=512,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = resp.content[0].text
+        if llm is not None:
+            text = llm.complete(prompt, model=model, max_tokens=512)
+        else:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=512,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = resp.content[0].text
         try:
             data = _extract_json(text)
             return [q for q in data.get("topics", []) if q in valid]

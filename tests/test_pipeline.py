@@ -45,10 +45,10 @@ def test_harvest_step_imports_only_matched_and_updates_state():
     kg = FakeKG()
 
     def fake_fetch(config): return iter([P1, P2])
-    def fake_classify(paper, topics, *, model, api_key):
+    def fake_classify(paper, topics, *, model, api_key, **kwargs):
         return ["Q11"] if paper.arxiv_id == "2401.00001" else []
 
-    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg, model="test-model",
                                   fetch=fake_fetch, classify=fake_classify,
                                   summarize=_summ("a short summary"), keyworder=_kw(["A", "B"]))
     assert count == 1
@@ -62,7 +62,7 @@ def test_harvest_step_skips_seen_ids():
     cfg = _cfg()
     state = State(seen_ids={"2401.00001"})
     kg = FakeKG()
-    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg, model="test-model",
                                   fetch=lambda config: iter([P1]),
                                   classify=lambda *a, **k: ["Q11"])
     assert count == 0
@@ -73,7 +73,7 @@ def test_harvest_step_dry_run_does_not_import():
     cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "true"})
     state = State()
     kg = FakeKG()
-    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg, model="test-model",
                                   fetch=lambda config: iter([P1]),
                                   classify=lambda *a, **k: ["Q11"])
     assert count == 1 and kg.imported == []
@@ -89,11 +89,11 @@ def test_harvest_step_respects_harvest_limit():
     def fake_fetch(config):
         return iter([P1, P2, P3])
 
-    def fake_classify(paper, topics, *, model, api_key):
+    def fake_classify(paper, topics, *, model, api_key, **kwargs):
         calls.append(paper.arxiv_id)
         return ["Q11"]
 
-    pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+    pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg, model="test-model",
                           fetch=fake_fetch, classify=fake_classify, summarize=_summ(), keyworder=_kw())
     # only the first 2 new papers are considered/classified; the 3rd is never reached
     assert calls == ["2401.00001", "2401.00002"]
@@ -112,7 +112,7 @@ def test_harvest_step_uses_theme_arxiv_queries():
             return iter([P1])
         return iter([P2])
 
-    def fake_classify(paper, topics, *, model, api_key):
+    def fake_classify(paper, topics, *, model, api_key, **kwargs):
         return ["Q11"] if paper.arxiv_id == "2401.00001" else ["Q12"]
 
     count = pipeline.harvest_step(
@@ -120,6 +120,7 @@ def test_harvest_step_uses_theme_arxiv_queries():
         state,
         topics=QUERY_TOPICS,
         kg=kg,
+        model="test-model",
         fetch=fake_fetch,
         classify=fake_classify,
         summarize=_summ(),
@@ -143,6 +144,7 @@ def test_harvest_step_deduplicates_theme_arxiv_queries():
         State(),
         topics=topics,
         kg=FakeKG(),
+        model="test-model",
         fetch=lambda config: queries.append(config.arxiv_query) or iter([]),
         classify=lambda *a, **k: [],
     )
@@ -159,7 +161,7 @@ def test_harvest_step_purges_imported_paper_pages():
         def purge(self, titles): self.purged.extend(titles)
 
     pub = PurgePub()
-    pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+    pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg, model="test-model",
                           fetch=lambda config: iter([P1, P2]),
                           classify=lambda paper, *a, **k: ["Q11"] if paper.arxiv_id == "2401.00001" else [],
                           summarize=_summ(), keyworder=_kw(), publisher=pub)
@@ -173,12 +175,12 @@ def test_harvest_step_isolates_failing_paper():
     kg = FakeKG()
 
     def fake_fetch(config): return iter([P1, P2])
-    def fake_classify(paper, topics, *, model, api_key):
+    def fake_classify(paper, topics, *, model, api_key, **kwargs):
         if paper.arxiv_id == "2401.00001":
             return ["Q11"]
         raise RuntimeError("classify exploded")
 
-    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
+    count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg, model="test-model",
                                   fetch=fake_fetch, classify=fake_classify, summarize=_summ(), keyworder=_kw())
     assert count == 1
     assert kg.imported == [("2401.00001", "tl;dr", ["kw"])]

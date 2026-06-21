@@ -12,6 +12,7 @@ from .kg.topics import Topic
 from .llm.topic_classifier import classify_paper
 from .llm.summarizer import summarize_paper
 from .llm.keyworder import keywords_paper
+from .llm.client import make_llm_client
 from .wiki.page_builder import RESEARCH_THEME_STUB
 
 log = logging.getLogger(__name__)
@@ -50,11 +51,15 @@ def harvest_step(
     classify=classify_paper,
     summarize=summarize_paper,
     keyworder=keywords_paper,
+    llm=None,
+    model: str | None = None,
     publisher=None,
 ) -> int:
     imported = 0
     considered = 0
     imported_titles: list[str] = []
+    llm = llm or make_llm_client(config)
+    model = model or config.model_qid
     for harvest_config in _harvest_configs(config, topics):
         log.info("Harvesting arXiv query: %s", harvest_config.arxiv_query)
         for record in fetch(harvest_config):
@@ -64,15 +69,25 @@ def harvest_step(
             considered += 1
             try:
                 matched = classify(
-                    record, topics, model=config.model, api_key=config.anthropic_api_key
+                    record,
+                    topics,
+                    model=model,
+                    api_key=config.anthropic_api_key,
+                    llm=llm,
                 )
                 if matched:
                     if not config.dry_run:
                         tldr = summarize(
-                            record, model=config.model, api_key=config.anthropic_api_key
+                            record,
+                            model=model,
+                            api_key=config.anthropic_api_key,
+                            llm=llm,
                         )
                         keywords = keyworder(
-                            record, model=config.model, api_key=config.anthropic_api_key
+                            record,
+                            model=model,
+                            api_key=config.anthropic_api_key,
+                            llm=llm,
                         )
                         paper_qid = kg.import_paper(
                             record, tldr=tldr, keywords=keywords,

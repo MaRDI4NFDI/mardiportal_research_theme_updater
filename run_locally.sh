@@ -18,6 +18,9 @@ Examples:
     ./run_locally.sh --dry-run
     ./run_locally.sh --themes-only
     ./run_locally.sh
+
+For harvest runs, TOPIC_OVERVIEWS_MODEL_QID must point to a KG model item with
+P1966 "LLM model identifier"; that value is passed to the selected LLM provider.
 EOF
 }
 
@@ -69,8 +72,23 @@ if [[ "$dry_run" == false ]]; then
     require_var "WIKIBASE_URL"
 fi
 
+llm_provider="${TOPIC_OVERVIEWS_LLM_PROVIDER:-anthropic}"
+llm_provider="${llm_provider,,}"
+if [[ "$llm_provider" != "anthropic" && "$llm_provider" != "ollama" ]]; then
+    echo "ERROR: TOPIC_OVERVIEWS_LLM_PROVIDER must be 'anthropic' or 'ollama'." >&2
+    exit 1
+fi
+
 if [[ "$themes_only" == false ]]; then
+    require_var "TOPIC_OVERVIEWS_MODEL_QID"
+fi
+
+if [[ "$themes_only" == false && "$llm_provider" == "anthropic" ]]; then
     require_var "ANTHROPIC_API_KEY"
+fi
+
+if [[ "$themes_only" == false && "$llm_provider" == "ollama" ]]; then
+    require_var "TOPIC_OVERVIEWS_OLLAMA_URL"
 fi
 
 if (( ${#missing[@]} > 0 )); then

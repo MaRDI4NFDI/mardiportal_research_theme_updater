@@ -16,15 +16,18 @@ def summarize_paper(
     model: str,
     api_key: str,
     client=None,
+    llm=None,
 ) -> str:
     """Return a one-sentence TL;DR for the paper (empty string on failure)."""
-    if client is None:
+    if llm is None and client is None:
         from anthropic import Anthropic
 
         client = Anthropic(api_key=api_key)
 
     prompt = f"{_SYSTEM}\n\nTITLE: {paper.title}\nABSTRACT: {paper.abstract}"
     try:
+        if llm is not None:
+            return llm.complete(prompt, model=model, max_tokens=200).strip()
         resp = client.messages.create(
             model=model,
             max_tokens=200,

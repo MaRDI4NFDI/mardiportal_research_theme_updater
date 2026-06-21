@@ -11,8 +11,9 @@ def test_load_config_reads_env_and_defaults():
     assert cfg.anthropic_api_key == "sk-test"
     assert cfg.research_theme_qid == "Q123"
     assert cfg.dry_run is True
-    assert cfg.model == "claude-haiku-4-5"        # default
     assert cfg.arxiv_query_property == "P1965"
+    assert cfg.llm_provider == "anthropic"
+    assert cfg.ollama_url == "http://localhost:11434"
 
 
 def test_dry_run_defaults_false():
