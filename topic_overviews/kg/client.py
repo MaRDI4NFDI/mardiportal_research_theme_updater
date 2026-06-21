@@ -6,8 +6,12 @@ topic, so the canonical paper entity is never polluted by this feature.
 """
 from __future__ import annotations
 
+from wikibaseintegrator.datatypes import Item as WBItem
+from wikibaseintegrator.models import Qualifiers
+
 from ..harvest.arxiv_oai import PaperRecord
 from . import model as M
+from .author_resolver import AuthorResolver
 
 
 def to_wbi_time(date: str) -> str:
@@ -15,8 +19,9 @@ def to_wbi_time(date: str) -> str:
 
 
 class KGClient:
-    def __init__(self, mc):
+    def __init__(self, mc, author_resolver: AuthorResolver | None = None):
         self.mc = mc
+        self.author_resolver = author_resolver
 
     def get_paper_qid(self, arxiv_id: str) -> str | None:
         """Return the QID of the canonical paper item for ``arxiv_id`` if it exists."""
@@ -63,7 +68,13 @@ class KGClient:
         for cat in record.categories:
             item.add_claim(M.P_ARXIV_CLASSIFICATION, value=cat)
         for name in record.authors:
-            item.add_claim(M.P_AUTHOR_NAME_STRING, value=name)
+            author_qid = self.author_resolver.resolve(name) if self.author_resolver else None
+            if author_qid:
+                qual = Qualifiers()
+                qual.add(WBItem(prop_nr=M.P_AUTHOR, value=author_qid))
+                item.add_claim(M.P_AUTHOR_NAME_STRING, value=name, qualifiers=qual)
+            else:
+                item.add_claim(M.P_AUTHOR_NAME_STRING, value=name)
         if tldr:
             item.add_claim(M.P_TLDR, value=tldr)
         for kw in keywords or []:
@@ -111,4 +122,5 @@ def make_kg_client(config) -> KGClient:
         sparql_endpoint_url=config.sparql_endpoint_url,
         wikibase_url=config.wikibase_url,
     )
-    return KGClient(mc)
+    resolver = AuthorResolver(config.mediawiki_api_url)
+    return KGClient(mc, author_resolver=resolver)
