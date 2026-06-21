@@ -55,3 +55,62 @@ def test_load_registered_topics_can_read_arxiv_query_property():
 
 def test_load_registered_topics_empty():
     assert load_registered_topics("http://ep", "Q5", run=lambda e, q: []) == []
+
+
+def test_load_topics_includes_openalex_query():
+    rows = [
+        {
+            "topic": "https://portal.mardi4nfdi.de/entity/Q7266564",
+            "label": "MaRDI",
+            "desc": "MaRDI theme",
+            "arxivQuery": "all:mardi",
+            "openalexQuery": "search=mardi&filter=funders.id:f4320320879",
+        }
+    ]
+    topics = load_registered_topics(
+        "http://sparql",
+        "Q7266523",
+        arxiv_query_property="P1965",
+        openalex_query_property="P1967",
+        run=lambda endpoint, query: rows,
+    )
+    assert topics[0].openalex_query == "search=mardi&filter=funders.id:f4320320879"
+
+
+def test_load_topics_openalex_query_defaults_to_empty():
+    rows = [
+        {
+            "topic": "https://portal.mardi4nfdi.de/entity/Q7266564",
+            "label": "MaRDI",
+            "desc": "",
+            "arxivQuery": "",
+        }
+    ]
+    topics = load_registered_topics(
+        "http://sparql",
+        "Q7266523",
+        arxiv_query_property="P1965",
+        openalex_query_property="P1967",
+        run=lambda endpoint, query: rows,
+    )
+    assert topics[0].openalex_query == ""
+
+
+def test_load_topics_omits_openalex_when_property_not_configured():
+    rows = [
+        {
+            "topic": "https://portal.mardi4nfdi.de/entity/Q7266564",
+            "label": "MaRDI",
+            "desc": "",
+            "arxivQuery": "",
+        }
+    ]
+    captured = []
+    load_registered_topics(
+        "http://sparql",
+        "Q7266523",
+        arxiv_query_property="P1965",
+        openalex_query_property="",
+        run=lambda endpoint, query: captured.append(query) or rows,
+    )
+    assert "openalexQuery" not in captured[0]
