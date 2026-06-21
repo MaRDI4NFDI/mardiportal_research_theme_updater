@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime
+import dataclasses
 import logging
 
 from .config import Config
@@ -21,6 +22,24 @@ def default_harvest(config: Config):
     return search_records(config.arxiv_query, config.since_days)
 
 
+def _harvest_configs(config: Config, topics: list[Topic]) -> list[Config]:
+    """Build one arXiv-search config per distinct theme query.
+
+    Theme-owned queries are preferred. The global query remains a compatibility
+    fallback for themes that do not yet have the KG property set.
+    """
+    queries: list[str] = []
+    seen: set[str] = set()
+    for topic in topics:
+        query = (topic.arxiv_query or config.arxiv_query).strip()
+        if query and query not in seen:
+            seen.add(query)
+            queries.append(query)
+    if not queries and config.arxiv_query.strip():
+        queries.append(config.arxiv_query.strip())
+    return [dataclasses.replace(config, arxiv_query=query) for query in queries]
+
+
 def harvest_step(
     config: Config,
     state: State,
@@ -36,33 +55,37 @@ def harvest_step(
     imported = 0
     considered = 0
     imported_titles: list[str] = []
-    for record in fetch(config):
-        if record.arxiv_id in state.seen_ids:
-            continue
-        state.seen_ids.add(record.arxiv_id)
-        considered += 1
-        try:
-            matched = classify(
-                record, topics, model=config.model, api_key=config.anthropic_api_key
-            )
-            if matched:
-                if not config.dry_run:
-                    tldr = summarize(
-                        record, model=config.model, api_key=config.anthropic_api_key
-                    )
-                    keywords = keyworder(
-                        record, model=config.model, api_key=config.anthropic_api_key
-                    )
-                    paper_qid = kg.import_paper(
-                        record, tldr=tldr, keywords=keywords,
-                        generated_by=config.model_qid or None,
-                    )
-                    for topic_qid in matched:
-                        kg.link_topic(topic_qid, paper_qid)
-                imported += 1
-                imported_titles.append(record.title)
-        except Exception as exc:
-            log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
+    for harvest_config in _harvest_configs(config, topics):
+        log.info("Harvesting arXiv query: %s", harvest_config.arxiv_query)
+        for record in fetch(harvest_config):
+            if record.arxiv_id in state.seen_ids:
+                continue
+            state.seen_ids.add(record.arxiv_id)
+            considered += 1
+            try:
+                matched = classify(
+                    record, topics, model=config.model, api_key=config.anthropic_api_key
+                )
+                if matched:
+                    if not config.dry_run:
+                        tldr = summarize(
+                            record, model=config.model, api_key=config.anthropic_api_key
+                        )
+                        keywords = keyworder(
+                            record, model=config.model, api_key=config.anthropic_api_key
+                        )
+                        paper_qid = kg.import_paper(
+                            record, tldr=tldr, keywords=keywords,
+                            generated_by=config.model_qid or None,
+                        )
+                        for topic_qid in matched:
+                            kg.link_topic(topic_qid, paper_qid)
+                    imported += 1
+                    imported_titles.append(record.title)
+            except Exception as exc:
+                log.warning("Skipping paper %s due to error: %s", record.arxiv_id, exc)
+            if config.harvest_limit and considered >= config.harvest_limit:
+                break
         if config.harvest_limit and considered >= config.harvest_limit:
             break
     # Purge each new paper's page so it renders fresh on the portal.

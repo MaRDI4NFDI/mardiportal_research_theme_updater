@@ -9,6 +9,7 @@ from typing import Mapping
 @dataclass(frozen=True)
 class Config:
     arxiv_query: str
+    arxiv_query_property: str
     since_days: int
     model: str
     state_path: str
@@ -31,6 +32,7 @@ def _flag(value: str) -> bool:
 def load_config(env: Mapping[str, str] = os.environ) -> Config:
     return Config(
         arxiv_query=env.get("TOPIC_OVERVIEWS_ARXIV_QUERY", ""),
+        arxiv_query_property=env.get("TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY", "P1965"),
         since_days=int(env.get("TOPIC_OVERVIEWS_SINCE_DAYS", "10")),
         model=env.get("TOPIC_OVERVIEWS_MODEL", "claude-haiku-4-5"),
         state_path=env.get("TOPIC_OVERVIEWS_STATE_PATH", "state.json"),

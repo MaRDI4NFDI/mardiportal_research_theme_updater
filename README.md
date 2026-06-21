@@ -2,15 +2,18 @@
 
 Automated thematic research-overview pages for the MaRDI portal.
 
-The pipeline searches recent arXiv papers, classifies them into research themes
-registered in the MaRDI Wikibase, imports matched papers as canonical publication
-items, links them from the matching theme item, and ensures each theme has a wiki
-page that renders live from the KG.
+The pipeline searches recent arXiv papers using queries stored on research-theme
+items in the MaRDI Wikibase, classifies the results into registered themes,
+imports matched papers as canonical publication items, links them from the
+matching theme item, and ensures each theme has a wiki page that renders live
+from the KG.
 
 ## Data model
 
-Research themes are Wikibase items with `P31 -> Q7266523`. Paper membership is
-stored on the theme, not on the paper:
+Research themes are Wikibase items with `P31 -> Q7266523`. Each theme can carry
+an arXiv search query in the string property configured by
+`TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY`. Paper membership is stored on the theme,
+not on the paper:
 
 ```text
 Q_theme --P265 has part(s)--> Q_paper
@@ -39,7 +42,8 @@ Configuration is environment-variable first.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TOPIC_OVERVIEWS_ARXIV_QUERY` | empty | arXiv search query, e.g. `cat:math.NA` |
+| `TOPIC_OVERVIEWS_ARXIV_QUERY` | empty | Fallback arXiv search query for themes without a KG query |
+| `TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY` | `P1965` | Theme-item property containing an arXiv search query |
 | `TOPIC_OVERVIEWS_SINCE_DAYS` | `10` | Search window in days |
 | `TOPIC_OVERVIEWS_RESEARCH_THEME_QID` | `Q0` | Research-theme class, usually `Q7266523` |
 | `TOPIC_OVERVIEWS_MODEL` | `claude-haiku-4-5` | Anthropic model for classify/summarize/keywords |
@@ -64,6 +68,7 @@ python -m topic_overviews --themes-only
 python -m topic_overviews
 ```
 
-The default harvest path uses the arXiv search API sorted by submission date.
-`harvest/arxiv_oai.py` remains as tested OAI-PMH support and shared record
-model code, but it is not the current CLI harvest mode.
+The default harvest path uses the arXiv search API sorted by submission date,
+running one search per distinct theme query. `harvest/arxiv_oai.py` remains as
+tested OAI-PMH support and shared record model code, but it is not the current
+CLI harvest mode.

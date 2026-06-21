@@ -30,7 +30,11 @@ def main() -> None:
     if args.dry_run:
         config = dataclasses.replace(config, dry_run=True)
 
-    topics = load_registered_topics(config.sparql_endpoint_url, config.research_theme_qid)
+    topics = load_registered_topics(
+        config.sparql_endpoint_url,
+        config.research_theme_qid,
+        arxiv_query_property=config.arxiv_query_property,
+    )
     log.info("Loaded %d registered research themes", len(topics))
 
     kg = None if config.dry_run else make_kg_client(config)

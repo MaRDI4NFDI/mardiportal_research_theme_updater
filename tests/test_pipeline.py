@@ -7,8 +7,18 @@ from topic_overviews.kg.topics import Topic
 from topic_overviews import pipeline
 
 TOPICS = [Topic(qid="Q11", label="Online Algorithms", description="...")]
+QUERY_TOPICS = [
+    Topic(qid="Q11", label="Online Algorithms", description="...", arxiv_query="cat:cs.DS"),
+    Topic(qid="Q12", label="Numerical Analysis", description="...", arxiv_query="cat:math.NA"),
+]
 P1 = PaperRecord("2401.00001", "Caching", "abs", ["Jane Doe"], ["cs.DS"], "2024-01-02", None)
 P2 = PaperRecord("2401.00002", "Unrelated", "abs", ["X"], ["math.AG"], "2024-01-03", None)
+
+
+def _cfg(env=None):
+    values = {"TOPIC_OVERVIEWS_ARXIV_QUERY": "cat:cs.DS"}
+    values.update(env or {})
+    return load_config(values)
 
 
 class FakeKG:
@@ -30,7 +40,7 @@ def _kw(kws=("kw",)):
 
 
 def test_harvest_step_imports_only_matched_and_updates_state():
-    cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
     state = State()
     kg = FakeKG()
 
@@ -49,7 +59,7 @@ def test_harvest_step_imports_only_matched_and_updates_state():
 
 
 def test_harvest_step_skips_seen_ids():
-    cfg = load_config({})
+    cfg = _cfg()
     state = State(seen_ids={"2401.00001"})
     kg = FakeKG()
     count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
@@ -60,7 +70,7 @@ def test_harvest_step_skips_seen_ids():
 
 
 def test_harvest_step_dry_run_does_not_import():
-    cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "true"})
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "true"})
     state = State()
     kg = FakeKG()
     count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg,
@@ -70,7 +80,7 @@ def test_harvest_step_dry_run_does_not_import():
 
 
 def test_harvest_step_respects_harvest_limit():
-    cfg = load_config({"TOPIC_OVERVIEWS_HARVEST_LIMIT": "2"})
+    cfg = _cfg({"TOPIC_OVERVIEWS_HARVEST_LIMIT": "2"})
     state = State()
     kg = FakeKG()
     P3 = PaperRecord("2401.00003", "Third", "abs", ["Z"], ["math.CO"], "2024-01-04", None)
@@ -90,8 +100,57 @@ def test_harvest_step_respects_harvest_limit():
     assert state.seen_ids == {"2401.00001", "2401.00002"}
 
 
+def test_harvest_step_uses_theme_arxiv_queries():
+    cfg = _cfg({"TOPIC_OVERVIEWS_ARXIV_QUERY": "fallback"})
+    state = State()
+    kg = FakeKG()
+    queries = []
+
+    def fake_fetch(config):
+        queries.append(config.arxiv_query)
+        if config.arxiv_query == "cat:cs.DS":
+            return iter([P1])
+        return iter([P2])
+
+    def fake_classify(paper, topics, *, model, api_key):
+        return ["Q11"] if paper.arxiv_id == "2401.00001" else ["Q12"]
+
+    count = pipeline.harvest_step(
+        cfg,
+        state,
+        topics=QUERY_TOPICS,
+        kg=kg,
+        fetch=fake_fetch,
+        classify=fake_classify,
+        summarize=_summ(),
+        keyworder=_kw(),
+    )
+    assert count == 2
+    assert queries == ["cat:cs.DS", "cat:math.NA"]
+    assert kg.links == [("Q11", "Q999"), ("Q12", "Q999")]
+
+
+def test_harvest_step_deduplicates_theme_arxiv_queries():
+    cfg = _cfg()
+    topics = [
+        Topic(qid="Q11", label="A", description="", arxiv_query="cat:math.NA"),
+        Topic(qid="Q12", label="B", description="", arxiv_query="cat:math.NA"),
+    ]
+    queries = []
+
+    pipeline.harvest_step(
+        cfg,
+        State(),
+        topics=topics,
+        kg=FakeKG(),
+        fetch=lambda config: queries.append(config.arxiv_query) or iter([]),
+        classify=lambda *a, **k: [],
+    )
+    assert queries == ["cat:math.NA"]
+
+
 def test_harvest_step_purges_imported_paper_pages():
-    cfg = load_config({})
+    cfg = _cfg()
     state = State()
     kg = FakeKG()
 
@@ -109,7 +168,7 @@ def test_harvest_step_purges_imported_paper_pages():
 
 
 def test_harvest_step_isolates_failing_paper():
-    cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
     state = State()
     kg = FakeKG()
 
