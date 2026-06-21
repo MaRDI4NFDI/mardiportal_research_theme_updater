@@ -108,6 +108,16 @@ def test_import_paper_without_tldr_sets_no_tldr_claim():
     assert not any(prop == "P1963" for prop, _ in item.claims)
 
 
+def test_import_paper_sets_one_keyword_claim_per_keyword():
+    item = FakeItem()
+    mc = FakeMC(existing=[], item=item)
+    KGClient(mc).import_paper(PAPER, keywords=["Caching", "Online", "Predictions"])
+    assert ("P1964", "Caching") in item.claims
+    assert ("P1964", "Online") in item.claims
+    assert ("P1964", "Predictions") in item.claims
+    assert sum(1 for p, _ in item.claims if p == "P1964") == 3
+
+
 def test_import_existing_paper_reuses_item():
     item = FakeItem()
     mc = FakeMC(existing=["Q500"], item=item)

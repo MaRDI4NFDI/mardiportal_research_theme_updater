@@ -15,7 +15,8 @@ P_SUBCLASS_OF = "P36"
 P_AFFILIATION = "P55"
 P_HAS_PART = "P265"            # topic --has part(s)--> paper (membership lives on the topic)
 P_PROFILE_TYPE = "P1460"       # MaRDI profile type
-P_TLDR = "P1963"               # one-sentence AI-generated TL;DR summary (string)
+P_TLDR = "P1963"               # AI-generated TL;DR summary (string)
+P_KEYWORDS = "P1964"           # AI-generated topical keywords/tags (string, one claim per keyword)
 
 # Classes
 Q_SCHOLARLY_ARTICLE = "Q56887"

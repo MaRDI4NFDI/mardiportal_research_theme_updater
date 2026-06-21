@@ -10,6 +10,7 @@ from .harvest.arxiv_search import search_records
 from .kg.topics import Topic
 from .llm.topic_classifier import classify_paper
 from .llm.summarizer import summarize_paper
+from .llm.keyworder import keywords_paper
 from .wiki.page_builder import build_index_page, RESEARCH_THEME_STUB, INDEX_PAGE_TITLE
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ def harvest_step(
     fetch=default_harvest,
     classify=classify_paper,
     summarize=summarize_paper,
+    keyworder=keywords_paper,
     publisher=None,
 ) -> int:
     imported = 0
@@ -48,7 +50,10 @@ def harvest_step(
                     tldr = summarize(
                         record, model=config.model, api_key=config.anthropic_api_key
                     )
-                    paper_qid = kg.import_paper(record, tldr=tldr)
+                    keywords = keyworder(
+                        record, model=config.model, api_key=config.anthropic_api_key
+                    )
+                    paper_qid = kg.import_paper(record, tldr=tldr, keywords=keywords)
                     for topic_qid in matched:
                         kg.link_topic(topic_qid, paper_qid)
                 imported += 1
