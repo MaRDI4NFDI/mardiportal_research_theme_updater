@@ -2,7 +2,7 @@
 ``research theme`` class). Each such item is one research theme to classify into."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .model import P_INSTANCE_OF, qid_from_uri
 from .sparql import run_sparql
