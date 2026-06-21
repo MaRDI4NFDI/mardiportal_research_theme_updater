@@ -63,6 +63,7 @@ def harvest_step(
     considered = 0
     imported_titles: list[str] = []
     imported_qids: list[str] = []
+    topic_label = {t.qid: t.label for t in topics}
     llm = llm or make_llm_client(config)
     model = model or config.model_qid
     for harvest_config in _harvest_configs(config, topics):
@@ -105,11 +106,12 @@ def harvest_step(
                     api_key=config.anthropic_api_key,
                     llm=llm,
                 )
+                matched_labels = [f"{topic_label.get(q, q)} ({q})" for q in matched] if matched else []
                 log.info(
-                    "Classified arXiv paper %s (%s) into %s",
+                    "Classified arXiv paper %s (%s) into: %s",
                     record.arxiv_id,
                     record.title,
-                    matched or [],
+                    ", ".join(matched_labels) if matched_labels else "no matching theme",
                 )
                 if matched:
                     if not config.dry_run:
@@ -146,7 +148,12 @@ def harvest_step(
                         )
                         for topic_qid in matched:
                             kg.link_topic(topic_qid, paper_qid)
-                            log.info("Linked %s to theme %s", paper_qid, topic_qid)
+                            log.info(
+                                "Linked %s to theme %s (%s)",
+                                paper_qid,
+                                topic_label.get(topic_qid, topic_qid),
+                                topic_qid,
+                            )
                     imported += 1
                     imported_titles.append(record.title)
                     if config.harvest_limit and imported >= config.harvest_limit:
