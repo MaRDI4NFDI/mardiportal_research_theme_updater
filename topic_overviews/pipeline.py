@@ -53,7 +53,10 @@ def harvest_step(
                     keywords = keyworder(
                         record, model=config.model, api_key=config.anthropic_api_key
                     )
-                    paper_qid = kg.import_paper(record, tldr=tldr, keywords=keywords)
+                    paper_qid = kg.import_paper(
+                        record, tldr=tldr, keywords=keywords,
+                        generated_by=config.model_qid or None,
+                    )
                     for topic_qid in matched:
                         kg.link_topic(topic_qid, paper_qid)
                 imported += 1

@@ -15,7 +15,7 @@ class FakeKG:
     def __init__(self):
         self.imported = []        # (arxiv_id, tldr, keywords)
         self.links = []
-    def import_paper(self, record, tldr=None, keywords=None):
+    def import_paper(self, record, tldr=None, keywords=None, generated_by=None):
         self.imported.append((record.arxiv_id, tldr, keywords)); return "Q999"
     def link_topic(self, topic_qid, paper_qid):
         self.links.append((topic_qid, paper_qid))
