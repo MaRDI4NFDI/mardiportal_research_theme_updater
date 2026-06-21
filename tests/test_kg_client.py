@@ -264,3 +264,43 @@ class TestEnforceThemeLimit:
     def test_no_op_when_api_url_not_set(self):
         client = KGClient(FakeMC())
         assert client.enforce_theme_limit("Q9999", max_papers=10) == 0
+
+
+def test_import_paper_without_arxiv_id_writes_no_p21():
+    """A paper harvested from OpenAlex with no arXiv ID should not get a P21 claim."""
+    claims_written = []
+
+    class FakeItem:
+        def add_claim(self, prop, value=None, qualifiers=None):
+            claims_written.append(prop)
+        def write(self):
+            class R:
+                id = "Q999"
+            return R()
+
+    class FakeMC:
+        def search_entity_by_value(self, prop, val):
+            return []
+        class item:
+            @staticmethod
+            def new():
+                i = FakeItem()
+                i.labels = type("L", (), {"set": lambda s, lang, v: None})()
+                return i
+
+    from topic_overviews.kg import model as M
+
+    kg = KGClient(FakeMC())
+    record = PaperRecord(
+        arxiv_id="",
+        title="OpenAlex Only Paper",
+        abstract="",
+        authors=[],
+        categories=[],
+        published="2026-06-15",
+        doi="10.1000/oa",
+        openalex_id="W9876543210",
+    )
+    qid = kg.import_paper(record)
+    assert qid == "Q999"
+    assert M.P_ARXIV_ID not in claims_written

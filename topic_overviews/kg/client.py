@@ -65,6 +65,8 @@ class KGClient:
 
     def get_paper_qid(self, arxiv_id: str) -> str | None:
         """Return the QID of the canonical paper item for ``arxiv_id`` if it exists."""
+        if not arxiv_id:
+            return None
         existing = self.mc.search_entity_by_value(M.P_ARXIV_ID, arxiv_id)
         return existing[0] if existing else None
 
@@ -99,7 +101,8 @@ class KGClient:
 
         item.add_claim(M.P_INSTANCE_OF, value=M.Q_SCHOLARLY_ARTICLE)
         item.add_claim(M.P_PROFILE_TYPE, value=M.Q_PUBLICATION_PROFILE)
-        item.add_claim(M.P_ARXIV_ID, value=record.arxiv_id)
+        if record.arxiv_id:
+            item.add_claim(M.P_ARXIV_ID, value=record.arxiv_id)
         if record.doi:
             item.add_claim(M.P_DOI, value=record.doi)
         item.add_claim(M.P_TITLE, value=record.title)
