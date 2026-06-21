@@ -24,6 +24,15 @@ class PaperRecord:
     categories: list[str]
     published: str
     doi: str | None = None
+    openalex_id: str = ""
+
+    @property
+    def record_id(self) -> str:
+        if self.arxiv_id:
+            return self.arxiv_id
+        if self.openalex_id:
+            return f"openalex:{self.openalex_id}"
+        raise ValueError("PaperRecord has neither arxiv_id nor openalex_id")
 
 
 def _text(el, path: str) -> str | None:

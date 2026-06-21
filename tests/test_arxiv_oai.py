@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from topic_overviews.harvest.arxiv_oai import PaperRecord, parse_oai_response, fetch_records
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "oai_listrecords.xml").read_text()
@@ -40,3 +41,19 @@ def test_fetch_records_follows_resumption_token():
     assert ids == ["2401.00001", "2402.00009"]
     assert "from" not in calls[0] or calls[0].get("from") is None
     assert calls[1]["resumptionToken"] == "TOKEN123"
+
+
+def test_record_id_returns_arxiv_id_when_set():
+    r = PaperRecord("2606.01234", "T", "A", [], [], "2026-06-01")
+    assert r.record_id == "2606.01234"
+
+
+def test_record_id_returns_openalex_prefix_when_no_arxiv_id():
+    r = PaperRecord("", "T", "A", [], [], "2026-06-01", openalex_id="W9876543210")
+    assert r.record_id == "openalex:W9876543210"
+
+
+def test_record_id_raises_when_both_empty():
+    r = PaperRecord("", "T", "A", [], [], "2026-06-01")
+    with pytest.raises(ValueError):
+        _ = r.record_id
