@@ -80,12 +80,3 @@ To limit a run to a single new paper inserted into the KG, set:
 ```bash
 TOPIC_OVERVIEWS_HARVEST_LIMIT=1
 ```
-
-To use the ZIB OpenAI-compatible API:
-
-```bash
-TOPIC_OVERVIEWS_LLM_PROVIDER=openai
-TOPIC_OVERVIEWS_MODEL_QID=<KG item with P1966=llama3.2:latest>
-TOPIC_OVERVIEWS_OPENAI_BASE_URL=https://ollama.zib.de/api
-TOPIC_OVERVIEWS_OPENAI_API_KEY=<token>
-```
