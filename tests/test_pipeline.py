@@ -226,10 +226,9 @@ def test_ensure_theme_pages_creates_page_and_sitelink_when_unconnected():
     # page created with the stub, then sitelink wired to it
     assert ("Online Algorithms", "{{ResearchTheme}}\n") in pub.edited
     assert kg.sitelinks_set == [("Q11", "Online Algorithms")]
-    # index page also written
-    assert ("Research themes", "= Research themes =\n\n* [[Online Algorithms]]\n") in pub.edited
-    # the new theme page + index are purged so they render fresh
-    assert "Online Algorithms" in pub.purged and "Research themes" in pub.purged
+    assert all(t != "Research themes" for t, _ in pub.edited)
+    # the new theme page is purged so it renders fresh
+    assert pub.purged == ["Online Algorithms"]
 
 
 def test_ensure_theme_pages_skips_already_connected_theme():
@@ -239,7 +238,8 @@ def test_ensure_theme_pages_skips_already_connected_theme():
     pipeline.ensure_theme_pages_step(cfg, topics=TOPICS, publisher=pub, kg=kg)
     assert kg.sitelinks_set == []                       # no sitelink rewired
     assert all(t != "Online Algorithms" for t, _ in pub.edited)  # no theme page created
-    assert any(t == "Research themes" for t, _ in pub.edited)    # index still refreshed
+    assert pub.edited == []
+    assert pub.purged == ["Existing Page"]
 
 
 def test_ensure_theme_pages_does_not_hijack_existing_page():

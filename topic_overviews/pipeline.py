@@ -12,7 +12,7 @@ from .kg.topics import Topic
 from .llm.topic_classifier import classify_paper
 from .llm.summarizer import summarize_paper
 from .llm.keyworder import keywords_paper
-from .wiki.page_builder import build_index_page, RESEARCH_THEME_STUB, INDEX_PAGE_TITLE
+from .wiki.page_builder import RESEARCH_THEME_STUB
 
 log = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def ensure_theme_pages_step(
     kg,
 ) -> list[str]:
     """Make every research theme renderable: ensure each has a ``{{ResearchTheme}}``
-    wiki page connected to its item via the ``mardi`` sitelink. Refresh the index.
+    wiki page connected to its item via the ``mardi`` sitelink.
 
     Per theme:
       - already has a sitelink -> leave it (page is wired; curator owns content);
@@ -136,9 +136,6 @@ def ensure_theme_pages_step(
         kg.set_theme_sitelink(topic.qid, title)
         page_titles.append(title)
 
-    publisher.edit(
-        INDEX_PAGE_TITLE, build_index_page(topics), "Update research theme index"
-    )
-    # Purge theme pages (so their live tables refresh) and the index.
-    publisher.purge(page_titles + [INDEX_PAGE_TITLE])
+    # Purge theme pages so their live tables refresh.
+    publisher.purge(page_titles)
     return titles
