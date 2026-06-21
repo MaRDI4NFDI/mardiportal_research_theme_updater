@@ -26,10 +26,16 @@ class FakeKG:
     def __init__(self):
         self.imported = []        # (arxiv_id, tldr, keywords)
         self.links = []
+        self.paper_qids = {}
+        self.paper_tldrs = set()
     def import_paper(self, record, tldr=None, keywords=None, generated_by=None):
         self.imported.append((record.arxiv_id, tldr, keywords)); return "Q999"
     def link_topic(self, topic_qid, paper_qid):
         self.links.append((topic_qid, paper_qid))
+    def get_paper_qid(self, arxiv_id):
+        return self.paper_qids.get(arxiv_id)
+    def paper_has_tldr(self, paper_qid):
+        return paper_qid in self.paper_tldrs
 
 
 def _summ(text="tl;dr"):
@@ -90,6 +96,32 @@ def test_harvest_step_logs_inserted_qids(caplog):
     assert "Generating TL;DR and keywords for 2401.00001 (Caching)" in caplog.text
     assert "Inserted arXiv paper 2401.00001 as KG item Q123" in caplog.text
     assert "Harvest inserted 1 paper(s): Q123" in caplog.text
+
+
+def test_harvest_step_skips_papers_that_already_have_tldr(caplog):
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    state = State()
+    kg = FakeKG()
+    kg.paper_qids["2401.00001"] = "Q555"
+    kg.paper_tldrs.add("Q555")
+
+    with caplog.at_level(logging.INFO, logger="topic_overviews.pipeline"):
+        count = pipeline.harvest_step(
+            cfg,
+            state,
+            topics=TOPICS,
+            kg=kg,
+            model="test-model",
+            fetch=lambda config: iter([P1]),
+            classify=lambda *a, **k: ["Q11"],
+            summarize=_summ("a short summary"),
+            keyworder=_kw(["A", "B"]),
+        )
+
+    assert count == 0
+    assert kg.imported == []
+    assert kg.links == []
+    assert "Skipping arXiv paper 2401.00001 (Caching): KG item Q555 already has P1963" in caplog.text
 
 
 def test_harvest_step_skips_seen_ids():

@@ -135,6 +135,18 @@ def test_import_existing_paper_reuses_item():
     assert ("P31", "Q56887") in item.claims      # claims still written on existing item
 
 
+def test_get_paper_qid_returns_existing_qid():
+    item = FakeItem()
+    mc = FakeMC(existing=["Q500"], item=item)
+    assert KGClient(mc).get_paper_qid(PAPER.arxiv_id) == "Q500"
+
+
+def test_paper_has_tldr_checks_existing_paper_claims():
+    item = FakeItem(values={"P1963": ["Already there"]})
+    mc = FakeMC(existing=["Q500"], item=item)
+    assert KGClient(mc).paper_has_tldr("Q500") is True
+
+
 def test_link_topic_adds_paper_to_topic_when_absent():
     topic = FakeItem(item_id="Q11")
     mc = FakeMC(item=topic)

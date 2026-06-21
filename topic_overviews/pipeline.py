@@ -69,6 +69,19 @@ def harvest_step(
             state.seen_ids.add(record.arxiv_id)
             considered += 1
             try:
+                existing_qid = None
+                get_paper_qid = getattr(kg, "get_paper_qid", None)
+                paper_has_tldr = getattr(kg, "paper_has_tldr", None)
+                if callable(get_paper_qid) and callable(paper_has_tldr):
+                    existing_qid = get_paper_qid(record.arxiv_id)
+                    if existing_qid and paper_has_tldr(existing_qid):
+                        log.info(
+                            "Skipping arXiv paper %s (%s): KG item %s already has P1963",
+                            record.arxiv_id,
+                            record.title,
+                            existing_qid,
+                        )
+                        continue
                 log.info(
                     "Classifying arXiv paper %s (%s) with model %s",
                     record.arxiv_id,

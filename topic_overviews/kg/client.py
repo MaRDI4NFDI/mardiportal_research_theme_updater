@@ -18,6 +18,16 @@ class KGClient:
     def __init__(self, mc):
         self.mc = mc
 
+    def get_paper_qid(self, arxiv_id: str) -> str | None:
+        """Return the QID of the canonical paper item for ``arxiv_id`` if it exists."""
+        existing = self.mc.search_entity_by_value(M.P_ARXIV_ID, arxiv_id)
+        return existing[0] if existing else None
+
+    def paper_has_tldr(self, paper_qid: str) -> bool:
+        """Return whether the paper item already has a TL;DR claim."""
+        item = self.mc.item.get(entity_id=paper_qid)
+        return bool(item.get_value(M.P_TLDR))
+
     def import_paper(
         self,
         record: PaperRecord,
@@ -35,9 +45,9 @@ class KGClient:
         # NOTE: use BARE local MaRDI PIDs/QIDs. A "wdt:"/"wd:" prefix makes
         # mardiclient interpret the id as a *Wikidata* one and remote-map it,
         # which both picks the wrong property and 404s. Our model.py ids are local.
-        existing = self.mc.search_entity_by_value(M.P_ARXIV_ID, record.arxiv_id)
-        if existing:
-            item = self.mc.item.get(entity_id=existing[0])
+        existing_qid = self.get_paper_qid(record.arxiv_id)
+        if existing_qid:
+            item = self.mc.item.get(entity_id=existing_qid)
         else:
             item = self.mc.item.new()
             item.labels.set("en", record.title[:250])
