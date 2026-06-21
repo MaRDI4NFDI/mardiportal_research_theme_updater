@@ -68,13 +68,12 @@ class KGClient:
         for cat in record.categories:
             item.add_claim(M.P_ARXIV_CLASSIFICATION, value=cat)
         for name in record.authors:
+            item.add_claim(M.P_AUTHOR_NAME_STRING, value=name)
             author_qid = self.author_resolver.resolve(name) if self.author_resolver else None
             if author_qid:
                 qual = Qualifiers()
-                qual.add(WBItem(prop_nr=M.P_AUTHOR, value=author_qid))
-                item.add_claim(M.P_AUTHOR_NAME_STRING, value=name, qualifiers=qual)
-            else:
-                item.add_claim(M.P_AUTHOR_NAME_STRING, value=name)
+                qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=M.Q_LLM_AUTHOR_RESOLVER))
+                item.add_claim(M.P_AUTHOR, value=author_qid, qualifiers=qual)
         if tldr:
             item.add_claim(M.P_TLDR, value=tldr)
         for kw in keywords or []:
