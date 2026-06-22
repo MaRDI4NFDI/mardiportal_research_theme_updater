@@ -57,9 +57,13 @@ class OpenAICompatibleLLMClient:
                 "max_tokens": max_tokens,
                 "temperature": 0,
                 "stream": False,
-                # Ollama-specific: extend context window for reasoning models
-                # whose chain-of-thought can exhaust the default 8192-token limit
-                "options": {"num_ctx": 32768},
+                # Ollama-specific options.
+                # num_ctx: extend context window so reasoning chains don't hit the
+                #          default 8192-token limit.
+                # think:   disable Qwen3/QwQ thinking mode — without this the model
+                #          burns all max_tokens on internal reasoning and returns
+                #          empty content for open-ended tasks like TL;DR generation.
+                "options": {"num_ctx": 32768, "think": False},
             },
             timeout=300,
         )
@@ -70,6 +74,11 @@ class OpenAICompatibleLLMClient:
             return ""
         message = choices[0].get("message") or {}
         content = message.get("content", "")
+        # Qwen3 / DeepSeek-R1 thinking models: actual answer may land in
+        # reasoning_content when content is empty (Ollama separates thinking tokens).
+        if not content:
+            log.info("content empty; raw message keys: %s", list(message.keys()))
+            content = message.get("reasoning_content", "")
         text = content if isinstance(content, str) else str(content)
         log.info("LLM response ← %r", text[:300])
         return text
