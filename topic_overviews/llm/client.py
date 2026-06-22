@@ -45,43 +45,48 @@ class OpenAICompatibleLLMClient:
 
     def complete(self, prompt: str, *, model: str, max_tokens: int) -> str:
         log.info("LLM request → openai-compat/%s (prompt %d chars)", model, len(prompt))
-        resp = requests.post(
-            f"{self.base_url.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-                "temperature": 0,
-                "stream": False,
-                # Ollama-specific options.
-                # num_ctx: extend context window so reasoning chains don't hit the
-                #          default 8192-token limit.
-                # think:   disable Qwen3/QwQ thinking mode — without this the model
-                #          burns all max_tokens on internal reasoning and returns
-                #          empty content for open-ended tasks like TL;DR generation.
-                "options": {"num_ctx": 32768, "think": False},
-            },
-            timeout=300,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        choices = data.get("choices") or []
-        if not choices:
-            return ""
-        message = choices[0].get("message") or {}
-        content = message.get("content", "")
-        # Qwen3 / DeepSeek-R1 thinking models: actual answer may land in
-        # reasoning_content when content is empty (Ollama separates thinking tokens).
-        if not content:
-            log.info("content empty; raw message keys: %s", list(message.keys()))
-            content = message.get("reasoning_content", "")
-        text = content if isinstance(content, str) else str(content)
-        log.info("LLM response ← %r", text[:300])
-        return text
+        for attempt in range(2):
+            resp = requests.post(
+                f"{self.base_url.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                    "temperature": 0,
+                    "stream": False,
+                    # Ollama-specific options.
+                    # num_ctx: extend context window so reasoning chains don't hit the
+                    #          default 8192-token limit.
+                    # think:   disable Qwen3/QwQ thinking mode — without this the model
+                    #          burns all max_tokens on internal reasoning and returns
+                    #          empty content for open-ended tasks like TL;DR generation.
+                    "options": {"num_ctx": 32768, "think": False},
+                },
+                timeout=300,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            choices = data.get("choices") or []
+            if not choices:
+                log.warning("Empty choices on attempt %d", attempt + 1)
+                continue
+            message = choices[0].get("message") or {}
+            content = message.get("content", "")
+            # Qwen3 / DeepSeek-R1: answer sometimes lands in reasoning_content
+            # when the server kills generation before writing to content.
+            if not content:
+                log.info("content empty (attempt %d); message keys: %s", attempt + 1, list(message.keys()))
+                content = message.get("reasoning_content", "")
+            if content:
+                text = content if isinstance(content, str) else str(content)
+                log.info("LLM response ← %r", text[:300])
+                return text
+            log.warning("Empty response on attempt %d, retrying", attempt + 1)
+        return ""
 
 
 def make_llm_client(config) -> LLMClient:
