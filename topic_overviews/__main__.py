@@ -11,7 +11,7 @@ from .state import load_state, save_state
 from .kg.topics import load_registered_topics
 from .kg.client import make_kg_client
 from .kg.model_items import get_llm_model_identifier
-from .wiki.publisher import WikiPublisher
+from .wiki.publisher import make_publisher
 from . import pipeline
 
 
@@ -48,7 +48,7 @@ def main() -> None:
         log.info("  Theme %s: %s", t.qid, t.label)
 
     kg = None if config.dry_run else make_kg_client(config)
-    publisher = None if config.dry_run else _make_publisher(config)
+    publisher = None if config.dry_run else make_publisher(config)
 
     if not args.themes_only:
         state = load_state(config.state_path)
@@ -68,11 +68,6 @@ def main() -> None:
     )
     log.info("Ensured %d research theme pages", len(pages))
 
-
-def _make_publisher(config) -> WikiPublisher:
-    pub = WikiPublisher(config.mediawiki_api_url, config.mediawiki_bot_user, config.mediawiki_bot_password)
-    pub.login()
-    return pub
 
 
 if __name__ == "__main__":

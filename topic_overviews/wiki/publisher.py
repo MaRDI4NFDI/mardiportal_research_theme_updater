@@ -80,3 +80,9 @@ class WikiPublisher:
         pages = resp.json()["query"]["pages"]
         # MediaWiki marks absent titles with a "missing" key (and a negative pageid).
         return not any("missing" in page for page in pages.values())
+
+
+def make_publisher(config) -> WikiPublisher:
+    pub = WikiPublisher(config.mediawiki_api_url, config.mediawiki_bot_user, config.mediawiki_bot_password)
+    pub.login()
+    return pub

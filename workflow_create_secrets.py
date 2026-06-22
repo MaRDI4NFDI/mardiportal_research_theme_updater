@@ -1,0 +1,27 @@
+"""One-time setup: create Prefect Secret blocks for the topic-overviews flow.
+
+Run once against the MaRDI Prefect server:
+
+    PREFECT_API_URL=http://prefect-mardi.zib.de/api \
+    PREFECT_API_AUTH_STRING="admin:<password>" \
+    python workflow_create_secrets.py
+
+You will be prompted for each secret value interactively.
+Re-running overwrites existing blocks (overwrite=True).
+"""
+import getpass
+from prefect.blocks.system import Secret
+
+
+def create(name: str, prompt: str) -> None:
+    value = getpass.getpass(f"{prompt}: ")
+    Secret(value=value).save(name, overwrite=True)
+    print(f"  ✓  {name}")
+
+
+if __name__ == "__main__":
+    print("Creating Prefect Secret blocks for topic-overviews\n")
+    create("topic-overviews-bot-user",        "MediaWiki bot username (e.g. DoipBot)")
+    create("topic-overviews-bot-password",    "MediaWiki bot password")
+    create("topic-overviews-openai-api-key",  "ZIB Ollama API key (OLLAMA_API_KEY)")
+    print("\nDone.")
