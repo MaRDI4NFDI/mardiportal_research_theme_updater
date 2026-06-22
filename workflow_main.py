@@ -30,6 +30,7 @@ _MODEL_QID = "Q7266560"
 _OPENAI_BASE_URL = "https://ollama.zib.de/api"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.getLogger("topic_overviews").setLevel(logging.INFO)
 
 
 @flow(name="topic-overviews", log_prints=True)
