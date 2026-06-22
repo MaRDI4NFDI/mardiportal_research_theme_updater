@@ -13,15 +13,15 @@ import getpass
 from prefect.blocks.system import Secret
 
 
-def create(name: str, prompt: str) -> None:
-    value = getpass.getpass(f"{prompt}: ")
+def create(name: str, prompt: str, *, secret: bool = True) -> None:
+    value = getpass.getpass(f"{prompt}: ") if secret else input(f"{prompt}: ")
     Secret(value=value).save(name, overwrite=True)
     print(f"  ✓  {name}")
 
 
 if __name__ == "__main__":
     print("Creating Prefect Secret blocks for topic-overviews\n")
-    create("topic-overviews-bot-user",        "MediaWiki bot username (e.g. DoipBot)")
+    create("topic-overviews-bot-user",        "MediaWiki bot username (e.g. DoipBot)", secret=False)
     create("topic-overviews-bot-password",    "MediaWiki bot password")
     create("topic-overviews-openai-api-key",  "ZIB Ollama API key (OLLAMA_API_KEY)")
     print("\nDone.")

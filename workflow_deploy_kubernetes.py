@@ -18,9 +18,10 @@ if __name__ == "__main__":
     ).deploy(
         name="topic-overviews",
         work_pool_name="K8WorkerPool",
-        cron="0 4 * * *",  # daily at 04:00 UTC; remove to manage via UI
+        # Schedule is managed via the Prefect UI (Deployments → + Schedule).
         job_variables={
             "image": "ghcr.io/mardi4nfdi/mardiportal_research_theme_updater:latest",
+            "env": {"PREFECT_LOGGING_EXTRA_LOGGERS": "topic_overviews"},
         },
         parameters={
             "since_days": 10,
