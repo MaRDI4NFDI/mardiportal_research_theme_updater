@@ -6,6 +6,7 @@ topic, so the canonical paper entity is never polluted by this feature.
 """
 from __future__ import annotations
 
+import json
 import logging
 import requests
 
@@ -129,6 +130,82 @@ class KGClient:
             item.add_claim(M.P_GENERATED_BY, value=generated_by)  # bare local QID
 
         return item.write().id
+
+    def add_zbmath_enrichment(
+        self,
+        paper_qid: str,
+        zbmath_id: str,
+        zbmath_author_ids: list[tuple[str, str]],
+    ) -> None:
+        """Backfill zbMATH data onto an already-imported paper item.
+
+        Writes P225 (zbMATH document ID) via ``wbcreateclaim`` if not already
+        set, then for each author with a zbMATH Autorenkennung (P676) that
+        resolves to a KG person item, adds a P16 claim with a P1642 qualifier.
+        Uses the claims API throughout — safe on items with pre-existing claims.
+        """
+        s = self._get_session()
+
+        if zbmath_id:
+            r = s.get(
+                self._api_url,
+                params={
+                    "action": "wbgetclaims", "entity": paper_qid,
+                    "property": M.P_ZBMATH_ID, "format": "json",
+                },
+                timeout=30,
+            )
+            r.raise_for_status()
+            if not r.json().get("claims", {}).get(M.P_ZBMATH_ID):
+                s.post(
+                    self._api_url,
+                    data={
+                        "action": "wbcreateclaim", "entity": paper_qid,
+                        "snaktype": "value", "property": M.P_ZBMATH_ID,
+                        "value": json.dumps(zbmath_id),
+                        "token": self._csrf(), "format": "json", "bot": "1",
+                    },
+                    timeout=30,
+                ).raise_for_status()
+                log.info("Enriched %s: added P225=%s", paper_qid, zbmath_id)
+
+        for name, zbmath_author_id in zbmath_author_ids:
+            if not zbmath_author_id:
+                continue
+            hits = self.mc.search_entity_by_value(M.P_ZBMATH_AUTHOR_ID, zbmath_author_id)
+            if not hits:
+                log.debug("P676=%s not found in KG (author %r)", zbmath_author_id, name)
+                continue
+            author_qid = hits[0]
+            r = s.post(
+                self._api_url,
+                data={
+                    "action": "wbcreateclaim", "entity": paper_qid,
+                    "snaktype": "value", "property": M.P_AUTHOR,
+                    "value": json.dumps({"entity-type": "item", "id": author_qid}),
+                    "token": self._csrf(), "format": "json", "bot": "1",
+                },
+                timeout=30,
+            )
+            r.raise_for_status()
+            claim_guid = (r.json().get("claim") or {}).get("id")
+            if claim_guid:
+                s.post(
+                    self._api_url,
+                    data={
+                        "action": "wbsetqualifier", "claim": claim_guid,
+                        "snaktype": "value", "property": M.P_GENERATED_BY,
+                        "value": json.dumps(
+                            {"entity-type": "item", "id": M.Q_LLM_AUTHOR_RESOLVER}
+                        ),
+                        "token": self._csrf(), "format": "json", "bot": "1",
+                    },
+                    timeout=30,
+                ).raise_for_status()
+            log.info(
+                "Enriched %s: added P16=%s via P676=%s (author %r)",
+                paper_qid, author_qid, zbmath_author_id, name,
+            )
 
     def link_topic(self, topic_qid: str, paper_qid: str) -> None:
         """Add the paper to the topic's ``has part(s)`` (P265) list, idempotently.

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterator
 from xml.etree import ElementTree as ET
 
@@ -26,6 +26,7 @@ class PaperRecord:
     doi: str | None = None
     openalex_id: str = ""
     zbmath_id: str = ""
+    zbmath_author_ids: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def record_id(self) -> str:

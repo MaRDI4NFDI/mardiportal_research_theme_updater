@@ -97,6 +97,7 @@ def _process_record(
     topic_label: dict,
     imported_titles: list,
     imported_qids: list,
+    lookup_zb=None,
 ) -> bool:
     """Classify, optionally import, and link one record. Returns True if imported."""
     rid = record.record_id
@@ -145,6 +146,15 @@ def _process_record(
         )
         imported_qids.append(paper_qid)
         log.info("Inserted %s paper %s as KG item %s", source_label, rid, paper_qid)
+        # Inline zbMATH enrichment for arXiv/OpenAlex records (adds P225 + P676 author resolution).
+        if callable(lookup_zb) and record.arxiv_id and not record.zbmath_id:
+            zb = lookup_zb(record.arxiv_id)
+            if zb:
+                log.info(
+                    "zbMATH enrichment: found %s for arXiv:%s — adding P225 + P676 authors",
+                    zb.zbmath_id, record.arxiv_id,
+                )
+                kg.add_zbmath_enrichment(paper_qid, zb.zbmath_id, zb.zbmath_author_ids)
         for topic_qid in matched:
             kg.link_topic(topic_qid, paper_qid)
             log.info(
@@ -166,6 +176,7 @@ def harvest_step(
     fetch=default_harvest,
     fetch_oa=None,
     fetch_zb=None,
+    lookup_zb=None,
     classify=classify_paper,
     summarize=summarize_paper,
     keyworder=keywords_paper,
@@ -180,30 +191,37 @@ def harvest_step(
     llm = llm or make_llm_client(config)
     model = model or config.model_qid
 
-    # --- arXiv pass ---
-    for harvest_config in _harvest_configs(config, topics):
+    from .harvest.zbmath import lookup_by_arxiv_id as _zb_lookup
+    _lookup_zb = lookup_zb if lookup_zb is not None else _zb_lookup
+
+    # --- zbMATH pass (highest quality — runs first; records carry author codes for P676 resolution) ---
+    _fetch_zb = fetch_zb or (lambda qs, sd, **kw: fetch_zbmath_records(qs, sd))
+    for zb_query, zb_since_days in _zbmath_query_configs(config, topics):
         covering = [
             t for t in topics
-            if (t.arxiv_query or config.arxiv_query).strip() == harvest_config.arxiv_query
-            and _effective_since_days(t, config) == harvest_config.since_days
+            if (t.zbmath_query or config.zbmath_query).strip() == zb_query
+            and _effective_since_days(t, config) == zb_since_days
         ]
         log.info(
-            "Harvesting arXiv query %r for %d theme(s): %s",
-            harvest_config.arxiv_query, len(covering),
+            "Harvesting zbMATH query %r (since_days=%d) for %d theme(s): %s",
+            zb_query, zb_since_days, len(covering),
             ", ".join(f"{t.label} ({t.qid})" for t in covering),
         )
         query_imported = 0
-        for record in fetch(harvest_config):
+        for record in _fetch_zb(zb_query, zb_since_days):
             try:
                 did_import = _process_record(
-                    record, "arXiv", covering, config, state, kg,
+                    record, "zbMATH", covering, config, state, kg,
                     classify, summarize, keyworder, llm, model,
                     topic_label, imported_titles, imported_qids,
                 )
             except PipelineError:
                 raise
             except Exception as exc:
-                log.warning("Skipping paper %s due to error: %s", record.record_id, exc)
+                log.warning(
+                    "Skipping zbMATH paper %s due to error: %s",
+                    getattr(record, "zbmath_id", "?"), exc,
+                )
                 continue
             if did_import:
                 imported += 1
@@ -235,6 +253,7 @@ def harvest_step(
                     record, "OpenAlex", covering, config, state, kg,
                     classify, summarize, keyworder, llm, model,
                     topic_label, imported_titles, imported_qids,
+                    lookup_zb=_lookup_zb,
                 )
             except PipelineError:
                 raise
@@ -250,34 +269,31 @@ def harvest_step(
             if config.harvest_limit and query_imported >= config.harvest_limit:
                 break
 
-    # --- zbMATH pass ---
-    _fetch_zb = fetch_zb or (lambda qs, sd, **kw: fetch_zbmath_records(qs, sd))
-    for zb_query, zb_since_days in _zbmath_query_configs(config, topics):
+    # --- arXiv pass (fallback for papers not yet indexed by zbMATH or OpenAlex) ---
+    for harvest_config in _harvest_configs(config, topics):
         covering = [
             t for t in topics
-            if (t.zbmath_query or config.zbmath_query).strip() == zb_query
-            and _effective_since_days(t, config) == zb_since_days
+            if (t.arxiv_query or config.arxiv_query).strip() == harvest_config.arxiv_query
+            and _effective_since_days(t, config) == harvest_config.since_days
         ]
         log.info(
-            "Harvesting zbMATH query %r (since_days=%d) for %d theme(s): %s",
-            zb_query, zb_since_days, len(covering),
+            "Harvesting arXiv query %r for %d theme(s): %s",
+            harvest_config.arxiv_query, len(covering),
             ", ".join(f"{t.label} ({t.qid})" for t in covering),
         )
         query_imported = 0
-        for record in _fetch_zb(zb_query, zb_since_days):
+        for record in fetch(harvest_config):
             try:
                 did_import = _process_record(
-                    record, "zbMATH", covering, config, state, kg,
+                    record, "arXiv", covering, config, state, kg,
                     classify, summarize, keyworder, llm, model,
                     topic_label, imported_titles, imported_qids,
+                    lookup_zb=_lookup_zb,
                 )
             except PipelineError:
                 raise
             except Exception as exc:
-                log.warning(
-                    "Skipping zbMATH paper %s due to error: %s",
-                    getattr(record, "zbmath_id", "?"), exc,
-                )
+                log.warning("Skipping paper %s due to error: %s", record.record_id, exc)
                 continue
             if did_import:
                 imported += 1
