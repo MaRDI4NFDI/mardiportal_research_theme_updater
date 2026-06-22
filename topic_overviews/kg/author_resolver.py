@@ -34,26 +34,35 @@ class AuthorResolver:
             self._cache[name] = self._resolve(name)
         return self._cache[name]
 
+    @staticmethod
+    def _normalize(name: str) -> str:
+        """Convert 'Last, First [Middle]' → 'First [Middle] Last'; pass through otherwise."""
+        if "," in name:
+            last, _, rest = name.partition(",")
+            return f"{rest.strip()} {last.strip()}"
+        return name
+
     def _resolve(self, name: str) -> str | None:
-        hits = self._kg_search(name)
+        normalized = self._normalize(name)
+        hits = self._kg_search(normalized)
         if not hits:
-            log.debug("Author %r: no KG match", name)
+            log.debug("Author %r: no KG match", normalized)
             return None
         if len(hits) == 1:
-            log.info("Author %r resolved to %s (exact KG match)", name, hits[0])
+            log.info("Author %r resolved to %s (exact KG match)", normalized, hits[0])
             return hits[0]
         # Ambiguous — try ORCID disambiguation.
-        orcid = self._openalex_orcid(name)
+        orcid = self._openalex_orcid(normalized)
         if orcid:
             for qid in hits:
                 if self._kg_orcid(qid) == orcid:
                     log.info(
-                        "Author %r resolved to %s via ORCID %s", name, qid, orcid
+                        "Author %r resolved to %s via ORCID %s", normalized, qid, orcid
                     )
                     return qid
         log.debug(
             "Author %r: %d KG hits but could not disambiguate (ORCID=%s)",
-            name, len(hits), orcid,
+            normalized, len(hits), orcid,
         )
         return None
 
