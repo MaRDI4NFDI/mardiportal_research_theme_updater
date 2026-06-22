@@ -71,7 +71,7 @@ def test_openai_compatible_llm_client_posts_chat_completion_request():
         "max_tokens": 7,
         "temperature": 0,
         "stream": False,
-        "options": {"num_ctx": 32768},
+        "options": {"num_ctx": 32768, "think": False},
     }
     assert captured["timeout"] == 300
 

@@ -15,6 +15,7 @@ class Topic:
     description: str
     arxiv_query: str = ""
     openalex_query: str = ""
+    zbmath_query: str = ""
     since_days: int | None = None
 
 
@@ -32,6 +33,7 @@ def load_registered_topics(
     *,
     arxiv_query_property: str = "",
     openalex_query_property: str = "",
+    zbmath_query_property: str = "",
     since_days_property: str = "",
     run=run_sparql,
 ) -> list[Topic]:
@@ -46,6 +48,11 @@ def load_registered_topics(
         select_parts.append("?openalexQuery")
         optional_parts.append(
             f"OPTIONAL {{ ?topic wdt:{openalex_query_property} ?openalexQuery. }}"
+        )
+    if zbmath_query_property:
+        select_parts.append("?zbmathQuery")
+        optional_parts.append(
+            f"OPTIONAL {{ ?topic wdt:{zbmath_query_property} ?zbmathQuery. }}"
         )
     if since_days_property:
         select_parts.append("?sinceDays")
@@ -67,6 +74,7 @@ def load_registered_topics(
             description=row.get("desc", ""),
             arxiv_query=row.get("arxivQuery", ""),
             openalex_query=row.get("openalexQuery", ""),
+            zbmath_query=row.get("zbmathQuery", ""),
             since_days=int(row["sinceDays"]) if row.get("sinceDays") else None,
         )
         for row in rows

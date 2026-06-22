@@ -81,6 +81,7 @@ def topic_overviews(
         _RESEARCH_THEME_QID,
         arxiv_query_property=config.arxiv_query_property,
         openalex_query_property=config.openalex_query_property,
+        zbmath_query_property=config.zbmath_query_property,
         since_days_property=config.since_days_property,
     )
     logger.info("Loaded %d research themes", len(topics))

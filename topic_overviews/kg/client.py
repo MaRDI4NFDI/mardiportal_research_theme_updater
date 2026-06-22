@@ -103,6 +103,10 @@ class KGClient:
         item.add_claim(M.P_PROFILE_TYPE, value=M.Q_PUBLICATION_PROFILE)
         if record.arxiv_id:
             item.add_claim(M.P_ARXIV_ID, value=record.arxiv_id)
+        if getattr(record, "openalex_id", ""):
+            item.add_claim(M.P_OPENALEX_ID, value=record.openalex_id)
+        if getattr(record, "zbmath_id", ""):
+            item.add_claim(M.P_ZBMATH_ID, value=record.zbmath_id)
         if record.doi:
             item.add_claim(M.P_DOI, value=record.doi)
         item.add_claim(M.P_TITLE, value=record.title)

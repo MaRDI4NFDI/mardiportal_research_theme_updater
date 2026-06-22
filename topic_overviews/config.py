@@ -12,6 +12,8 @@ class Config:
     arxiv_query_property: str
     openalex_query_property: str
     openalex_email: str
+    zbmath_query: str
+    zbmath_query_property: str
     since_days_property: str
     since_days: int
     llm_provider: str
@@ -41,6 +43,8 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         arxiv_query_property=env.get("TOPIC_OVERVIEWS_ARXIV_QUERY_PROPERTY", "P1965"),
         openalex_query_property=env.get("TOPIC_OVERVIEWS_OPENALEX_QUERY_PROPERTY", ""),
         openalex_email=env.get("TOPIC_OVERVIEWS_OPENALEX_EMAIL", ""),
+        zbmath_query=env.get("TOPIC_OVERVIEWS_ZBMATH_QUERY", ""),
+        zbmath_query_property=env.get("TOPIC_OVERVIEWS_ZBMATH_QUERY_PROPERTY", "P1979"),
         since_days_property=env.get("TOPIC_OVERVIEWS_SINCE_DAYS_PROPERTY", ""),
         since_days=int(env.get("TOPIC_OVERVIEWS_SINCE_DAYS", "10")),
         llm_provider=env.get("TOPIC_OVERVIEWS_LLM_PROVIDER", "anthropic"),

@@ -9,6 +9,7 @@ from .config import Config
 from .state import State
 from .harvest.arxiv_search import search_records
 from .harvest.openalex import fetch_openalex_records
+from .harvest.zbmath import fetch_zbmath_records
 from .kg.topics import Topic
 from .llm.topic_classifier import classify_paper
 from .llm.summarizer import summarize_paper
@@ -57,6 +58,21 @@ def _openalex_query_configs(config: Config, topics: list[Topic]) -> list[tuple[s
     result: list[tuple[str, int]] = []
     for topic in topics:
         q = topic.openalex_query.strip()
+        if not q:
+            continue
+        days = _effective_since_days(topic, config)
+        if (q, days) not in seen:
+            seen.add((q, days))
+            result.append((q, days))
+    return result
+
+
+def _zbmath_query_configs(config: Config, topics: list[Topic]) -> list[tuple[str, int]]:
+    """Collect unique (zbmath_query, since_days) pairs from topics, preserving order."""
+    seen: set[tuple[str, int]] = set()
+    result: list[tuple[str, int]] = []
+    for topic in topics:
+        q = (topic.zbmath_query or config.zbmath_query).strip()
         if not q:
             continue
         days = _effective_since_days(topic, config)
@@ -149,6 +165,7 @@ def harvest_step(
     kg,
     fetch=default_harvest,
     fetch_oa=None,
+    fetch_zb=None,
     classify=classify_paper,
     summarize=summarize_paper,
     keyworder=keywords_paper,
@@ -225,6 +242,41 @@ def harvest_step(
                 log.warning(
                     "Skipping OpenAlex paper %s due to error: %s",
                     getattr(record, "openalex_id", "?"), exc,
+                )
+                continue
+            if did_import:
+                imported += 1
+                query_imported += 1
+            if config.harvest_limit and query_imported >= config.harvest_limit:
+                break
+
+    # --- zbMATH pass ---
+    _fetch_zb = fetch_zb or (lambda qs, sd, **kw: fetch_zbmath_records(qs, sd))
+    for zb_query, zb_since_days in _zbmath_query_configs(config, topics):
+        covering = [
+            t for t in topics
+            if (t.zbmath_query or config.zbmath_query).strip() == zb_query
+            and _effective_since_days(t, config) == zb_since_days
+        ]
+        log.info(
+            "Harvesting zbMATH query %r (since_days=%d) for %d theme(s): %s",
+            zb_query, zb_since_days, len(covering),
+            ", ".join(f"{t.label} ({t.qid})" for t in covering),
+        )
+        query_imported = 0
+        for record in _fetch_zb(zb_query, zb_since_days):
+            try:
+                did_import = _process_record(
+                    record, "zbMATH", covering, config, state, kg,
+                    classify, summarize, keyworder, llm, model,
+                    topic_label, imported_titles, imported_qids,
+                )
+            except PipelineError:
+                raise
+            except Exception as exc:
+                log.warning(
+                    "Skipping zbMATH paper %s due to error: %s",
+                    getattr(record, "zbmath_id", "?"), exc,
                 )
                 continue
             if did_import:

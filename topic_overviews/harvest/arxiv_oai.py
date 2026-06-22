@@ -25,6 +25,7 @@ class PaperRecord:
     published: str
     doi: str | None = None
     openalex_id: str = ""
+    zbmath_id: str = ""
 
     @property
     def record_id(self) -> str:
@@ -32,7 +33,9 @@ class PaperRecord:
             return self.arxiv_id
         if self.openalex_id:
             return f"openalex:{self.openalex_id}"
-        raise ValueError("PaperRecord has neither arxiv_id nor openalex_id")
+        if self.zbmath_id:
+            return f"zbmath:{self.zbmath_id}"
+        raise ValueError("PaperRecord has no identifier")
 
 
 def _text(el, path: str) -> str | None:
