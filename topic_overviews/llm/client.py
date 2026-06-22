@@ -1,10 +1,13 @@
 """Provider-neutral LLM completion clients."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 
 import requests
+
+log = logging.getLogger(__name__)
 
 
 class LLMClient(Protocol):
@@ -24,12 +27,15 @@ class AnthropicLLMClient:
 
             client = Anthropic(api_key=self.api_key)
             self.client = client
+        log.info("LLM request → anthropic/%s (prompt %d chars)", model, len(prompt))
         resp = client.messages.create(
             model=model,
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
-        return resp.content[0].text
+        text = resp.content[0].text
+        log.info("LLM response ← %r", text[:300])
+        return text
 
 
 @dataclass
@@ -38,6 +44,7 @@ class OpenAICompatibleLLMClient:
     api_key: str
 
     def complete(self, prompt: str, *, model: str, max_tokens: int) -> str:
+        log.info("LLM request → openai-compat/%s (prompt %d chars)", model, len(prompt))
         resp = requests.post(
             f"{self.base_url.rstrip('/')}/chat/completions",
             headers={
@@ -63,7 +70,9 @@ class OpenAICompatibleLLMClient:
             return ""
         message = choices[0].get("message") or {}
         content = message.get("content", "")
-        return content if isinstance(content, str) else str(content)
+        text = content if isinstance(content, str) else str(content)
+        log.info("LLM response ← %r", text[:300])
+        return text
 
 
 def make_llm_client(config) -> LLMClient:
