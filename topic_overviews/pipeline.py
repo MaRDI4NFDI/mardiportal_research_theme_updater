@@ -196,38 +196,43 @@ def harvest_step(
 
     # --- zbMATH pass (highest quality — runs first; records carry author codes for P676 resolution) ---
     _fetch_zb = fetch_zb or (lambda qs, sd, **kw: fetch_zbmath_records(qs, sd))
-    for zb_query, zb_since_days in _zbmath_query_configs(config, topics):
-        covering = [
-            t for t in topics
-            if (t.zbmath_query or config.zbmath_query).strip() == zb_query
-            and _effective_since_days(t, config) == zb_since_days
-        ]
-        log.info(
-            "Harvesting zbMATH query %r (since_days=%d) for %d theme(s): %s",
-            zb_query, zb_since_days, len(covering),
-            ", ".join(f"{t.label} ({t.qid})" for t in covering),
-        )
-        query_imported = 0
-        for record in _fetch_zb(zb_query, zb_since_days):
-            try:
-                did_import = _process_record(
-                    record, "zbMATH", covering, config, state, kg,
-                    classify, summarize, keyworder, llm, model,
-                    topic_label, imported_titles, imported_qids,
-                )
-            except PipelineError:
-                raise
-            except Exception as exc:
-                log.warning(
-                    "Skipping zbMATH paper %s due to error: %s",
-                    getattr(record, "zbmath_id", "?"), exc,
-                )
-                continue
-            if did_import:
-                imported += 1
-                query_imported += 1
-            if config.harvest_limit and query_imported >= config.harvest_limit:
-                break
+    try:
+        for zb_query, zb_since_days in _zbmath_query_configs(config, topics):
+            covering = [
+                t for t in topics
+                if (t.zbmath_query or config.zbmath_query).strip() == zb_query
+                and _effective_since_days(t, config) == zb_since_days
+            ]
+            log.info(
+                "Harvesting zbMATH query %r (since_days=%d) for %d theme(s): %s",
+                zb_query, zb_since_days, len(covering),
+                ", ".join(f"{t.label} ({t.qid})" for t in covering),
+            )
+            query_imported = 0
+            for record in _fetch_zb(zb_query, zb_since_days):
+                try:
+                    did_import = _process_record(
+                        record, "zbMATH", covering, config, state, kg,
+                        classify, summarize, keyworder, llm, model,
+                        topic_label, imported_titles, imported_qids,
+                    )
+                except PipelineError:
+                    raise
+                except Exception as exc:
+                    log.warning(
+                        "Skipping zbMATH paper %s due to error: %s",
+                        getattr(record, "zbmath_id", "?"), exc,
+                    )
+                    continue
+                if did_import:
+                    imported += 1
+                    query_imported += 1
+                if config.harvest_limit and query_imported >= config.harvest_limit:
+                    break
+    except PipelineError:
+        raise
+    except Exception as exc:
+        log.warning("zbMATH harvest pass failed (%s) — continuing with OpenAlex and arXiv", exc)
 
     # --- OpenAlex pass ---
     _fetch_oa = fetch_oa or (
@@ -235,39 +240,44 @@ def harvest_step(
             qs, sd, email=config.openalex_email
         )
     )
-    for oa_query, oa_since_days in _openalex_query_configs(config, topics):
-        covering = [
-            t for t in topics
-            if t.openalex_query.strip() == oa_query
-            and _effective_since_days(t, config) == oa_since_days
-        ]
-        log.info(
-            "Harvesting OpenAlex query %r (since_days=%d) for %d theme(s): %s",
-            oa_query, oa_since_days, len(covering),
-            ", ".join(f"{t.label} ({t.qid})" for t in covering),
-        )
-        query_imported = 0
-        for record in _fetch_oa(oa_query, oa_since_days):
-            try:
-                did_import = _process_record(
-                    record, "OpenAlex", covering, config, state, kg,
-                    classify, summarize, keyworder, llm, model,
-                    topic_label, imported_titles, imported_qids,
-                    lookup_zb=_lookup_zb,
-                )
-            except PipelineError:
-                raise
-            except Exception as exc:
-                log.warning(
-                    "Skipping OpenAlex paper %s due to error: %s",
-                    getattr(record, "openalex_id", "?"), exc,
-                )
-                continue
-            if did_import:
-                imported += 1
-                query_imported += 1
-            if config.harvest_limit and query_imported >= config.harvest_limit:
-                break
+    try:
+        for oa_query, oa_since_days in _openalex_query_configs(config, topics):
+            covering = [
+                t for t in topics
+                if t.openalex_query.strip() == oa_query
+                and _effective_since_days(t, config) == oa_since_days
+            ]
+            log.info(
+                "Harvesting OpenAlex query %r (since_days=%d) for %d theme(s): %s",
+                oa_query, oa_since_days, len(covering),
+                ", ".join(f"{t.label} ({t.qid})" for t in covering),
+            )
+            query_imported = 0
+            for record in _fetch_oa(oa_query, oa_since_days):
+                try:
+                    did_import = _process_record(
+                        record, "OpenAlex", covering, config, state, kg,
+                        classify, summarize, keyworder, llm, model,
+                        topic_label, imported_titles, imported_qids,
+                        lookup_zb=_lookup_zb,
+                    )
+                except PipelineError:
+                    raise
+                except Exception as exc:
+                    log.warning(
+                        "Skipping OpenAlex paper %s due to error: %s",
+                        getattr(record, "openalex_id", "?"), exc,
+                    )
+                    continue
+                if did_import:
+                    imported += 1
+                    query_imported += 1
+                if config.harvest_limit and query_imported >= config.harvest_limit:
+                    break
+    except PipelineError:
+        raise
+    except Exception as exc:
+        log.warning("OpenAlex harvest pass failed (%s) — continuing with arXiv", exc)
 
     # --- arXiv pass (fallback for papers not yet indexed by zbMATH or OpenAlex) ---
     for harvest_config in _harvest_configs(config, topics):
