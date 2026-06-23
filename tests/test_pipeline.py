@@ -1,4 +1,3 @@
-import datetime
 import logging
 
 from topic_overviews.config import load_config
@@ -75,7 +74,6 @@ def test_harvest_step_imports_only_matched_and_updates_state():
     assert kg.imported == [("2401.00001", "a short summary", ["A", "B"])]   # tldr + keywords passed through
     assert kg.links == [("Q11", "Q999")]            # paper Q999 added to topic Q11 via P265
     assert state.seen_ids == {"2401.00001", "2401.00002"}
-    assert state.last_harvest == datetime.date.today().isoformat()
 
 
 def test_harvest_step_logs_inserted_qids(caplog):

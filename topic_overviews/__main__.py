@@ -7,7 +7,7 @@ import logging
 import sys
 
 from .config import load_config
-from .state import load_state, save_state
+from .state import State
 from .kg.topics import load_registered_topics
 from .kg.client import make_kg_client
 from .kg.model_items import get_llm_model_identifier
@@ -52,17 +52,14 @@ def main() -> None:
     publisher = None if config.dry_run else make_publisher(config)
 
     if not args.themes_only:
-        state = load_state(config.state_path)
         try:
             imported = pipeline.harvest_step(
-                config, state, topics=topics, kg=kg, model=model, publisher=publisher
+                config, State(), topics=topics, kg=kg, model=model, publisher=publisher
             )
         except pipeline.PipelineError as exc:
             log.error("Pipeline terminated: %s", exc)
-            save_state(config.state_path, state)
             sys.exit(1)
         log.info("Imported %d papers", imported)
-        save_state(config.state_path, state)
 
     pages = pipeline.ensure_theme_pages_step(
         config, topics=topics, publisher=publisher, kg=kg

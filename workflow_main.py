@@ -59,7 +59,6 @@ def topic_overviews(
         llm_provider="openai",
         openai_base_url=_OPENAI_BASE_URL,
         openai_api_key=openai_api_key,
-        state_path="state.json",
         research_theme_qid=_RESEARCH_THEME_QID,
         model_qid=_MODEL_QID,
         harvest_limit=harvest_limit,

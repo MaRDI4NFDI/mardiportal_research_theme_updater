@@ -1,7 +1,6 @@
 """Sequential pipeline steps. Plain functions with injected deps (Prefect-ready)."""
 from __future__ import annotations
 
-import datetime
 import dataclasses
 import logging
 
@@ -316,7 +315,6 @@ def harvest_step(
 
     if publisher is not None and not config.dry_run and imported_titles:
         publisher.purge(imported_titles)
-    state.last_harvest = datetime.date.today().isoformat()
 
     # Per-theme summary
     for topic in topics:
