@@ -274,6 +274,8 @@ def test_import_paper_without_arxiv_id_writes_no_p21():
     class FakeItem:
         def add_claim(self, prop, value=None, qualifiers=None):
             claims_written.append(prop)
+        def get_value(self, prop):
+            return []
         def write(self):
             class R:
                 id = "Q999"

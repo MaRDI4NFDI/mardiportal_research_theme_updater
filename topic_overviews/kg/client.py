@@ -121,6 +121,10 @@ class KGClient:
             item = self.mc.item.new()
             item.labels.set("en", record.title[:250])
 
+        # Collect author QIDs already on the item to avoid duplicate P16 claims
+        # when re-processing a paper that was partially imported in an earlier run.
+        existing_author_qids = set(item.get_value(M.P_AUTHOR) or [])
+
         item.add_claim(M.P_INSTANCE_OF, value=M.Q_SCHOLARLY_ARTICLE)
         item.add_claim(M.P_PROFILE_TYPE, value=M.Q_PUBLICATION_PROFILE)
         if record.arxiv_id:
@@ -139,10 +143,11 @@ class KGClient:
         for name in record.authors:
             item.add_claim(M.P_AUTHOR_NAME_STRING, value=name)
             author_qid = self.author_resolver.resolve(name) if self.author_resolver else None
-            if author_qid:
+            if author_qid and author_qid not in existing_author_qids:
                 qual = Qualifiers()
                 qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=M.Q_LLM_AUTHOR_RESOLVER))
                 item.add_claim(M.P_AUTHOR, value=author_qid, qualifiers=qual)
+                existing_author_qids.add(author_qid)
         if tldr:
             item.add_claim(M.P_TLDR, value=tldr)
         for kw in keywords or []:
