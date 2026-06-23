@@ -1,6 +1,8 @@
 import datetime
 import json
 
+import requests
+
 from topic_overviews.harvest.arxiv_oai import PaperRecord
 from topic_overviews.harvest.zbmath import (
     fetch_zbmath_records,
@@ -99,9 +101,12 @@ def _empty_response():
 
 
 class FakeResp:
-    def __init__(self, body):
+    def __init__(self, body, status_code=200):
         self._body = body
-    def raise_for_status(self): pass
+        self.status_code = status_code
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
     def json(self): return json.loads(self._body)
 
 
@@ -111,7 +116,8 @@ class FakeSession:
         self.calls = []
     def get(self, url, params=None, timeout=None):
         self.calls.append({"url": url, "params": params or {}})
-        return FakeResp(self._pages.pop(0) if self._pages else _empty_response())
+        item = self._pages.pop(0) if self._pages else _empty_response()
+        return item if isinstance(item, FakeResp) else FakeResp(item)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +235,16 @@ def test_fetch_stops_when_no_results():
     assert len(session.calls) == 1
 
 
+def test_fetch_treats_404_as_empty():
+    session = FakeSession([FakeResp("", status_code=404)])
+    records = list(fetch_zbmath_records(
+        "ti:mardi", since_days=10, session=session, sleep=lambda s: None,
+        today=datetime.date(2026, 6, 22),
+    ))
+    assert records == []
+    assert len(session.calls) == 1
+
+
 # ---------------------------------------------------------------------------
 # lookup_by_arxiv_id
 # ---------------------------------------------------------------------------
@@ -263,3 +279,10 @@ def test_lookup_empty_arxiv_id():
     result = lookup_by_arxiv_id("", session=session)
     assert result is None
     assert session.calls == []
+
+
+def test_lookup_returns_none_on_404():
+    session = FakeSession([FakeResp("", status_code=404)])
+    result = lookup_by_arxiv_id("2606.99999", session=session)
+    assert result is None
+    assert len(session.calls) == 1

@@ -116,6 +116,9 @@ def fetch_zbmath_records(
             params={"search_string": query, "page": page, "results_per_page": page_size},
             timeout=60,
         )
+        if resp.status_code == 404:
+            log.info("zbMATH query=%r returned 404 (no results for this period)", query_str)
+            return
         resp.raise_for_status()
         data = resp.json()
         status = data.get("status") or {}
@@ -151,6 +154,8 @@ def lookup_by_arxiv_id(
             params={"search_string": f"arxiv:{arxiv_id}", "page": 0, "results_per_page": 3},
             timeout=30,
         )
+        if resp.status_code == 404:
+            return None
         resp.raise_for_status()
         docs = resp.json().get("result") or []
         if not isinstance(docs, list):
