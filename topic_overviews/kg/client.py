@@ -102,9 +102,37 @@ class KGClient:
     def _sparql_find_by_value(self, prop: str, value: str) -> str | None:
         """Return the first QID whose ``prop`` claim matches ``value``, or None.
 
+        Tries CirrusSearch (haswbstatement) first — it is updated in near
+        real-time by ElasticSearch and avoids the Blazegraph SPARQL lag.
+        Falls back to a direct SPARQL query if the search returns nothing.
+
         Identifier values (DOI, arXiv ID, etc.) never contain quotes, so plain
-        string interpolation is safe here.
+        string interpolation into the SPARQL query is safe here.
         """
+        # --- CirrusSearch (fast, near real-time) ---
+        try:
+            resp = requests.get(
+                self._api_url,
+                params={
+                    "action": "query",
+                    "list": "search",
+                    "srsearch": f"haswbstatement:{prop}={value}",
+                    "srnamespace": "120",
+                    "srlimit": "1",
+                    "format": "json",
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            hits = resp.json().get("query", {}).get("search", [])
+            if hits:
+                # title is "Item:Q12345" — strip the namespace prefix
+                title = hits[0]["title"]
+                return title.split(":", 1)[-1]
+        except Exception as exc:
+            log.warning("CirrusSearch lookup for %s=%r failed: %s", prop, value, exc)
+
+        # --- SPARQL fallback (may lag by minutes after a write) ---
         query = f"""
 PREFIX wdt: <https://portal.mardi4nfdi.de/prop/direct/>
 SELECT ?item WHERE {{
@@ -126,6 +154,7 @@ LIMIT 1
                 return uri.rstrip("/").rsplit("/", 1)[-1]
         except Exception as exc:
             log.warning("SPARQL lookup for %s=%r failed: %s", prop, value, exc)
+
         return None
 
     def paper_has_tldr(self, paper_qid: str) -> bool:
