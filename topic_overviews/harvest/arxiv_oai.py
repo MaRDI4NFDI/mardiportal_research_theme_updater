@@ -68,7 +68,7 @@ def parse_oai_response(xml: str) -> tuple[list[PaperRecord], str | None]:
                 authors=authors,
                 categories=(_text(meta, "arxiv:categories") or "").split(),
                 published=_text(meta, "arxiv:created") or "",
-                doi=_text(meta, "arxiv:doi"),
+                doi=_text(meta, "arxiv:doi") or (f"10.48550/arXiv.{_text(meta, 'arxiv:id')}" if _text(meta, "arxiv:id") else None),
             )
         )
     token_el = root.find(".//oai:resumptionToken", NS)

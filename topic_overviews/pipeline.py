@@ -111,6 +111,11 @@ def _process_record(
     if callable(find_existing_paper) and callable(paper_has_tldr):
         existing_qid = find_existing_paper(record)
         if existing_qid and paper_has_tldr(existing_qid):
+            # Paper already fully imported — but write any identifiers the record
+            # now provides that are still missing (e.g. DOI or arXiv ID added later).
+            write_missing_ids = getattr(kg, "write_missing_identifiers", None)
+            if callable(write_missing_ids) and not config.dry_run:
+                write_missing_ids(existing_qid, record)
             log.info(
                 "Skipping %s paper %s (%s): KG item %s already has P1963",
                 source_label, rid, record.title, existing_qid,

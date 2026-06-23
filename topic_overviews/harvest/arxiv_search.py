@@ -48,7 +48,7 @@ def parse_atom(xml: str) -> list[PaperRecord]:
                 authors=[a for a in authors if a],
                 categories=[c.get("term") for c in e.findall("a:category", NS) if c.get("term")],
                 published=(e.findtext("a:published", default="", namespaces=NS) or "")[:10],
-                doi=e.findtext("arxiv:doi", default=None, namespaces=NS),
+                doi=e.findtext("arxiv:doi", default=None, namespaces=NS) or f"10.48550/arXiv.{arxiv_id}",
             )
         )
     return records

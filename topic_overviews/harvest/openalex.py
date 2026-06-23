@@ -37,12 +37,24 @@ def _strip_prefix(url: str, prefix: str) -> str:
     return url[len(prefix):] if url and url.startswith(prefix) else (url or "")
 
 
+def _arxiv_id_from_work(w: dict) -> str:
+    """Extract arXiv ID from ids.arxiv first, then fall back to locations."""
+    ids = w.get("ids") or {}
+    arxiv_raw = ids.get("arxiv", "") or ""
+    if arxiv_raw:
+        return _strip_prefix(arxiv_raw, "https://arxiv.org/abs/").strip()
+    for loc in (w.get("locations") or []):
+        url = (loc.get("landing_page_url") or "").strip()
+        if url.startswith("https://arxiv.org/abs/"):
+            return _strip_prefix(url, "https://arxiv.org/abs/").strip()
+    return ""
+
+
 def parse_works_page(works: list[dict]) -> list[PaperRecord]:
     records = []
     for w in works:
         ids = w.get("ids") or {}
-        arxiv_raw = ids.get("arxiv", "") or ""
-        arxiv_id = _strip_prefix(arxiv_raw, "https://arxiv.org/abs/").strip()
+        arxiv_id = _arxiv_id_from_work(w)
         openalex_raw = w.get("id", "") or ""
         openalex_id = openalex_raw.rstrip("/").rsplit("/", 1)[-1]
         doi_raw = (w.get("doi") or ids.get("doi") or "")

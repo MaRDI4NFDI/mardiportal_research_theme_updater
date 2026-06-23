@@ -73,6 +73,8 @@ def parse_documents_page(docs: list[dict]) -> list[PaperRecord]:
         year = str(d.get("year") or "").strip()
         published = f"{year}-01-01" if year else ""
 
+        if not doi and arxiv_id:
+            doi = f"10.48550/arXiv.{arxiv_id}"
         records.append(PaperRecord(
             arxiv_id=arxiv_id,
             title=title,

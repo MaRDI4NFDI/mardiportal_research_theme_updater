@@ -157,6 +157,45 @@ class KGClient:
 
         return item.write().id
 
+    def write_missing_identifiers(self, paper_qid: str, record: "PaperRecord") -> None:
+        """Write identifier claims that are present on the record but absent from the KG item.
+
+        Called when a paper is skipped (already has P1963) so that newly available
+        identifiers (DOI, arXiv ID from locations, zbMATH ID, OpenAlex ID) are
+        never permanently lost just because the paper was imported before they existed.
+        """
+        s = self._get_session()
+        candidate_ids = [
+            (M.P_ARXIV_ID, record.arxiv_id or ""),
+            (M.P_DOI, record.doi or ""),
+            (M.P_OPENALEX_ID, getattr(record, "openalex_id", "") or ""),
+            (M.P_ZBMATH_ID, getattr(record, "zbmath_id", "") or ""),
+        ]
+        for prop, value in candidate_ids:
+            if not value:
+                continue
+            r = s.get(
+                self._api_url,
+                params={"action": "wbgetclaims", "entity": paper_qid,
+                        "property": prop, "format": "json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            if r.json().get("claims", {}).get(prop):
+                continue  # already set
+            import json as _json
+            s.post(
+                self._api_url,
+                data={
+                    "action": "wbcreateclaim", "entity": paper_qid,
+                    "snaktype": "value", "property": prop,
+                    "value": _json.dumps(value),
+                    "token": self._csrf(), "format": "json", "bot": "1",
+                },
+                timeout=30,
+            ).raise_for_status()
+            log.info("write_missing_identifiers: %s added %s=%s", paper_qid, prop, value)
+
     def add_zbmath_enrichment(
         self,
         paper_qid: str,
