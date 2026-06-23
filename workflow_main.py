@@ -26,7 +26,7 @@ _MEDIAWIKI_API_URL = "https://portal.mardi4nfdi.de/w/api.php"
 _WIKIBASE_URL = "https://portal.mardi4nfdi.de"
 _SPARQL_ENDPOINT_URL = "https://query.portal.mardi4nfdi.de/sparql"
 _RESEARCH_THEME_QID = "Q7266523"
-_MODEL_QID = "Q7266560"
+_MODEL_QID = "Q7269921"
 _OPENAI_BASE_URL = "https://ollama.zib.de/api"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

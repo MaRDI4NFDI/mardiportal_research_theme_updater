@@ -2,10 +2,20 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
 import requests
+
+
+def _strip_thinking(text: str) -> str:
+    """Remove <think>…</think> blocks that thinking models embed in content.
+
+    Safe no-op for non-thinking models. Handles bleed-through automatically
+    without requiring the caller to know whether the model is a thinking model.
+    """
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 log = logging.getLogger(__name__)
 
@@ -58,13 +68,7 @@ class OpenAICompatibleLLMClient:
                     "max_tokens": max_tokens,
                     "temperature": 0,
                     "stream": False,
-                    # Ollama-specific options.
-                    # num_ctx: extend context window so reasoning chains don't hit the
-                    #          default 8192-token limit.
-                    # think:   disable Qwen3/QwQ thinking mode — without this the model
-                    #          burns all max_tokens on internal reasoning and returns
-                    #          empty content for open-ended tasks like TL;DR generation.
-                    "options": {"num_ctx": 32768, "think": False},
+                    "options": {"num_ctx": 32768},
                 },
                 timeout=300,
             )
@@ -75,16 +79,22 @@ class OpenAICompatibleLLMClient:
                 log.warning("Empty choices on attempt %d", attempt + 1)
                 continue
             message = choices[0].get("message") or {}
-            content = message.get("content", "")
-            # Qwen3 / DeepSeek-R1: answer sometimes lands in reasoning_content
-            # when the server kills generation before writing to content.
+            usage = data.get("usage") or {}
+            reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)
+            content = _strip_thinking(message.get("content") or "")
             if not content:
-                log.info("content empty (attempt %d); message keys: %s", attempt + 1, list(message.keys()))
-                content = message.get("reasoning_content", "")
+                if reasoning_tokens:
+                    log.warning(
+                        "content empty after stripping thinking blocks (attempt %d); "
+                        "model used %d reasoning tokens — thinking model may have "
+                        "exhausted budget before writing answer",
+                        attempt + 1, reasoning_tokens,
+                    )
+                else:
+                    log.info("content empty (attempt %d); message keys: %s", attempt + 1, list(message.keys()))
             if content:
-                text = content if isinstance(content, str) else str(content)
-                log.info("LLM response ← %r", text[:300])
-                return text
+                log.info("LLM response ← %r", content[:300])
+                return content
             log.warning("Empty response on attempt %d, retrying", attempt + 1)
         return ""
 

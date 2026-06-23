@@ -40,7 +40,7 @@ def summarize_paper(
             )
             text = resp.content[0].text
         log.info("TL;DR raw response: %s", text[:200])
-        return text.strip()
+        return " ".join(text.split())
     except Exception as exc:
         log.warning("TL;DR generation failed: %s", exc)
         return ""
