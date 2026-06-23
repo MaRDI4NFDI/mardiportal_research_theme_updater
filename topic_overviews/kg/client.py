@@ -100,7 +100,11 @@ class KGClient:
         return None
 
     def _sparql_find_by_value(self, prop: str, value: str) -> str | None:
-        """Return the first QID whose ``prop`` claim matches ``value``, or None."""
+        """Return the first QID whose ``prop`` claim matches ``value``, or None.
+
+        Identifier values (DOI, arXiv ID, etc.) never contain quotes, so plain
+        string interpolation is safe here.
+        """
         query = f"""
 PREFIX wdt: <https://portal.mardi4nfdi.de/prop/direct/>
 SELECT ?item WHERE {{
