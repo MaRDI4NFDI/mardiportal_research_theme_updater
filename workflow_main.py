@@ -94,8 +94,8 @@ def topic_overviews(
     publisher = None if dry_run else make_publisher(config)
 
     if not themes_only:
-        # State is intentionally fresh per run: the KG deduplication check
-        # (get_paper_qid + paper_has_tldr) prevents re-importing known papers.
+        # State is intentionally fresh per run: find_existing_paper checks all
+        # known identifiers against the KG to skip already-imported papers.
         state = State()
         imported = pipeline.harvest_step(
             config, state, topics=topics, kg=kg, model=model, publisher=publisher,

@@ -1,10 +1,10 @@
-"""Register the topic-overviews flow as a Prefect deployment on the K8s worker.
+"""Register the topic-overviews flow as a Prefect deployment.
 
 Run once (or after changes to parameters/schedule) with:
 
     PREFECT_API_URL=http://prefect-mardi.zib.de/api \
     PREFECT_API_AUTH_STRING="admin:<password>" \
-    python workflow_deploy_kubernetes.py
+    python workflow_deploy_prefect.py
 
 The schedule can also be set or changed via the Prefect UI after deployment
 (Deployments → topic-overviews → + Schedule).
