@@ -80,6 +80,12 @@ class KGClient:
         the first hit, so the same paper is never imported twice regardless of
         which source provided it.
 
+        For Zenodo DOIs (10.5281/zenodo.*) an additional label-based SPARQL
+        lookup is performed when all identifier checks fail.  Zenodo assigns a
+        new DOI per version upload, so two version deposits of the same paper
+        share no identifier yet have identical titles — the label lookup catches
+        this case without risking false positives for other paper types.
+
         Uses direct SPARQL with explicit MaRDI prefixes rather than
         mardiclient's search_entity_by_value, which silently hits the wrong
         endpoint (wikibaseintegrator defaults to Wikidata when its global config
@@ -97,6 +103,17 @@ class KGClient:
             qid = self._sparql_find_by_value(prop, value)
             if qid:
                 return qid
+
+        doi = record.doi or ""
+        if doi.startswith("10.5281/zenodo.") and record.title:
+            qid = self._sparql_find_by_label(record.title)
+            if qid:
+                log.info(
+                    "Zenodo label fallback matched %r → %s (DOI %s)",
+                    record.title, qid, doi,
+                )
+                return qid
+
         return None
 
     def _sparql_find_by_value(self, prop: str, value: str) -> str | None:
@@ -155,6 +172,38 @@ LIMIT 1
         except Exception as exc:
             log.warning("SPARQL lookup for %s=%r failed: %s", prop, value, exc)
 
+        return None
+
+    def _sparql_find_by_label(self, title: str) -> str | None:
+        """Return the QID of a scholarly article whose English label exactly matches
+        *title*, or None.  Only used as a Zenodo version-dedup fallback."""
+        # Escape backslashes and double-quotes so the title is safe inside a
+        # SPARQL string literal.
+        escaped = title.replace("\\", "\\\\").replace('"', '\\"')
+        query = f"""
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX wdt: <https://portal.mardi4nfdi.de/prop/direct/>
+PREFIX wd: <https://portal.mardi4nfdi.de/entity/>
+SELECT ?item WHERE {{
+  ?item rdfs:label "{escaped}"@en .
+  ?item wdt:{M.P_INSTANCE_OF} wd:{M.Q_SCHOLARLY_ARTICLE} .
+}}
+LIMIT 1
+"""
+        try:
+            resp = requests.get(
+                self._sparql_endpoint,
+                params={"query": query, "format": "json"},
+                headers={"Accept": "application/sparql-results+json"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            bindings = resp.json().get("results", {}).get("bindings", [])
+            if bindings:
+                uri = bindings[0]["item"]["value"]
+                return uri.rstrip("/").rsplit("/", 1)[-1]
+        except Exception as exc:
+            log.warning("Label SPARQL lookup for %r failed: %s", title, exc)
         return None
 
     def paper_has_tldr(self, paper_qid: str) -> bool:
