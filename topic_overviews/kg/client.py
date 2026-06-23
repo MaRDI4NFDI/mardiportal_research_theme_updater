@@ -190,6 +190,20 @@ class KGClient:
                 ).raise_for_status()
                 log.info("Enriched %s: added P225=%s", paper_qid, zbmath_id)
 
+        # Fetch existing P16 claims once to avoid adding duplicate authors.
+        existing_p16 = set()
+        r_p16 = s.get(
+            self._api_url,
+            params={"action": "wbgetclaims", "entity": paper_qid,
+                    "property": M.P_AUTHOR, "format": "json"},
+            timeout=30,
+        )
+        r_p16.raise_for_status()
+        for c in r_p16.json().get("claims", {}).get(M.P_AUTHOR, []):
+            qid = (c.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id")
+            if qid:
+                existing_p16.add(qid)
+
         for name, zbmath_author_id in zbmath_author_ids:
             if not zbmath_author_id:
                 continue
@@ -198,6 +212,10 @@ class KGClient:
                 log.debug("P676=%s not found in KG (author %r)", zbmath_author_id, name)
                 continue
             author_qid = hits[0]
+            if author_qid in existing_p16:
+                log.debug("P16=%s already set on %s (author %r), skipping", author_qid, paper_qid, name)
+                continue
+            existing_p16.add(author_qid)
             r = s.post(
                 self._api_url,
                 data={
