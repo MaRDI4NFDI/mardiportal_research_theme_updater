@@ -71,6 +71,27 @@ class KGClient:
         existing = self.mc.search_entity_by_value(M.P_ARXIV_ID, arxiv_id)
         return existing[0] if existing else None
 
+    def find_existing_paper(self, record: PaperRecord) -> str | None:
+        """Return QID of an existing paper item matching any known identifier, or None.
+
+        Tries arXiv ID → DOI → OpenAlex ID → zbMATH ID in order and returns on
+        the first hit, so the same paper is never imported twice regardless of
+        which source provided it.
+        """
+        checks = [
+            (M.P_ARXIV_ID, record.arxiv_id),
+            (M.P_DOI, record.doi or ""),
+            (M.P_OPENALEX_ID, getattr(record, "openalex_id", "")),
+            (M.P_ZBMATH_ID, getattr(record, "zbmath_id", "")),
+        ]
+        for prop, value in checks:
+            if not value:
+                continue
+            hits = self.mc.search_entity_by_value(prop, value)
+            if hits:
+                return hits[0]
+        return None
+
     def paper_has_tldr(self, paper_qid: str) -> bool:
         """Return whether the paper item already has a TL;DR claim."""
         item = self.mc.item.get(entity_id=paper_qid)
@@ -93,7 +114,7 @@ class KGClient:
         # NOTE: use BARE local MaRDI PIDs/QIDs. A "wdt:"/"wd:" prefix makes
         # mardiclient interpret the id as a *Wikidata* one and remote-map it,
         # which both picks the wrong property and 404s. Our model.py ids are local.
-        existing_qid = self.get_paper_qid(record.arxiv_id)
+        existing_qid = self.find_existing_paper(record)
         if existing_qid:
             item = self.mc.item.get(entity_id=existing_qid)
         else:

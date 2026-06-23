@@ -81,7 +81,8 @@ def test_import_new_paper_writes_only_paper_statements():
     qid = KGClient(mc).import_paper(PAPER)
 
     assert qid == "Q500"
-    assert mc.searched == [("P21", "2401.00001")]
+    # find_existing_paper tries arXiv ID then DOI before giving up (no OA/zbMATH IDs on this record)
+    assert mc.searched == [("P21", "2401.00001"), ("P27", "10.1000/xyz")]
     assert item.label == ("en", "A New Bound for Online Caching")
     assert ("P31", "Q56887") in item.claims          # instance of scholarly article
     assert ("P1460", "Q5976449") in item.claims      # MaRDI publication profile type

@@ -106,10 +106,10 @@ def _process_record(
     state.seen_ids.add(rid)
 
     existing_qid = None
-    get_paper_qid = getattr(kg, "get_paper_qid", None)
+    find_existing_paper = getattr(kg, "find_existing_paper", None)
     paper_has_tldr = getattr(kg, "paper_has_tldr", None)
-    if callable(get_paper_qid) and callable(paper_has_tldr) and record.arxiv_id:
-        existing_qid = get_paper_qid(record.arxiv_id)
+    if callable(find_existing_paper) and callable(paper_has_tldr):
+        existing_qid = find_existing_paper(record)
         if existing_qid and paper_has_tldr(existing_qid):
             log.info(
                 "Skipping %s paper %s (%s): KG item %s already has P1963",

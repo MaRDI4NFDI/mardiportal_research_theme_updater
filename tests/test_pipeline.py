@@ -31,7 +31,7 @@ class FakeKG:
     def __init__(self):
         self.imported = []        # (arxiv_id, tldr, keywords)
         self.links = []
-        self.paper_qids = {}
+        self.paper_qids = {}      # any identifier string -> QID
         self.paper_tldrs = set()
     def import_paper(self, record, tldr=None, keywords=None, generated_by=None):
         self.imported.append((record.arxiv_id, tldr, keywords)); return "Q999"
@@ -39,6 +39,12 @@ class FakeKG:
         self.links.append((topic_qid, paper_qid))
     def get_paper_qid(self, arxiv_id):
         return self.paper_qids.get(arxiv_id)
+    def find_existing_paper(self, record):
+        for key in [record.arxiv_id, record.doi or "",
+                    record.openalex_id, record.zbmath_id]:
+            if key and key in self.paper_qids:
+                return self.paper_qids[key]
+        return None
     def paper_has_tldr(self, paper_qid):
         return paper_qid in self.paper_tldrs
     def enforce_theme_limit(self, topic_qid, max_papers):
