@@ -97,6 +97,7 @@ def _process_record(
     topic_label: dict,
     imported_titles: list,
     imported_qids: list,
+    theme_added: dict,
     lookup_zb=None,
 ) -> bool:
     """Classify, optionally import, and link one record. Returns True if imported."""
@@ -157,6 +158,7 @@ def _process_record(
                 kg.add_zbmath_enrichment(paper_qid, zb.zbmath_id, zb.zbmath_author_ids)
         for topic_qid in matched:
             kg.link_topic(topic_qid, paper_qid)
+            theme_added.setdefault(topic_qid, []).append((paper_qid, record.title))
             log.info(
                 "Linked %s to theme %s (%s)", paper_qid,
                 topic_label.get(topic_qid, topic_qid), topic_qid,
@@ -187,6 +189,7 @@ def harvest_step(
     imported = 0
     imported_titles: list[str] = []
     imported_qids: list[str] = []
+    theme_added: dict[str, list[tuple[str, str]]] = {}
     topic_label = {t.qid: t.label for t in topics}
     llm = llm or make_llm_client(config)
     model = model or config.model_qid
@@ -214,7 +217,7 @@ def harvest_step(
                     did_import = _process_record(
                         record, "zbMATH", covering, config, state, kg,
                         classify, summarize, keyworder, llm, model,
-                        topic_label, imported_titles, imported_qids,
+                        topic_label, imported_titles, imported_qids, theme_added,
                     )
                 except PipelineError:
                     raise
@@ -258,7 +261,7 @@ def harvest_step(
                     did_import = _process_record(
                         record, "OpenAlex", covering, config, state, kg,
                         classify, summarize, keyworder, llm, model,
-                        topic_label, imported_titles, imported_qids,
+                        topic_label, imported_titles, imported_qids, theme_added,
                         lookup_zb=_lookup_zb,
                     )
                 except PipelineError:
@@ -297,7 +300,7 @@ def harvest_step(
                 did_import = _process_record(
                     record, "arXiv", covering, config, state, kg,
                     classify, summarize, keyworder, llm, model,
-                    topic_label, imported_titles, imported_qids,
+                    topic_label, imported_titles, imported_qids, theme_added,
                     lookup_zb=_lookup_zb,
                 )
             except PipelineError:
@@ -314,6 +317,20 @@ def harvest_step(
     if publisher is not None and not config.dry_run and imported_titles:
         publisher.purge(imported_titles)
     state.last_harvest = datetime.date.today().isoformat()
+
+    # Per-theme summary
+    for topic in topics:
+        entries = theme_added.get(topic.qid, [])
+        if entries:
+            log.info(
+                "Theme %r (%s): %d new paper(s)",
+                topic.label, topic.qid, len(entries),
+            )
+            for qid, title in entries:
+                log.info("  %s — %s", qid, title)
+        else:
+            log.info("Theme %r (%s): 0 new paper(s)", topic.label, topic.qid)
+
     if imported_qids:
         log.info("Harvest inserted %d paper(s): %s", imported, ", ".join(imported_qids))
     else:

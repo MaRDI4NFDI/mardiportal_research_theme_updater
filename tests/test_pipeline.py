@@ -108,6 +108,8 @@ def test_harvest_step_logs_inserted_qids(caplog):
     assert "Classifying arXiv paper 2401.00001 (Caching) with model test-model" in caplog.text
     assert "Generating TL;DR and keywords for 2401.00001 (Caching)" in caplog.text
     assert "Inserted arXiv paper 2401.00001 as KG item Q123" in caplog.text
+    assert "Theme 'Online Algorithms' (Q11): 1 new paper(s)" in caplog.text
+    assert "Q123 — Caching" in caplog.text
     assert "Harvest inserted 1 paper(s): Q123" in caplog.text
 
 
