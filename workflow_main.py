@@ -52,6 +52,8 @@ def topic_overviews(
         arxiv_query_property="P1965",
         openalex_query_property="P1967",
         openalex_email="",
+        zbmath_query="",
+        zbmath_query_property="P1979",
         since_days_property="P1968",
         since_days=since_days,
         llm_provider="openai",
