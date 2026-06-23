@@ -32,12 +32,14 @@ class KGClient:
         api_url: str = "",
         bot_user: str = "",
         bot_password: str = "",
+        sparql_endpoint: str = "",
     ):
         self.mc = mc
         self.author_resolver = author_resolver
         self._api_url = api_url
         self._bot_user = bot_user
         self._bot_password = bot_password
+        self._sparql_endpoint = sparql_endpoint or "https://query.portal.mardi4nfdi.de/sparql"
         self._session: requests.Session | None = None
 
     def _get_session(self) -> requests.Session:
@@ -77,6 +79,11 @@ class KGClient:
         Tries arXiv ID → DOI → OpenAlex ID → zbMATH ID in order and returns on
         the first hit, so the same paper is never imported twice regardless of
         which source provided it.
+
+        Uses direct SPARQL with explicit MaRDI prefixes rather than
+        mardiclient's search_entity_by_value, which silently hits the wrong
+        endpoint (wikibaseintegrator defaults to Wikidata when its global config
+        is not initialised in the current process).
         """
         checks = [
             (M.P_ARXIV_ID, record.arxiv_id),
@@ -87,9 +94,34 @@ class KGClient:
         for prop, value in checks:
             if not value:
                 continue
-            hits = self.mc.search_entity_by_value(prop, value)
-            if hits:
-                return hits[0]
+            qid = self._sparql_find_by_value(prop, value)
+            if qid:
+                return qid
+        return None
+
+    def _sparql_find_by_value(self, prop: str, value: str) -> str | None:
+        """Return the first QID whose ``prop`` claim matches ``value``, or None."""
+        query = f"""
+PREFIX wdt: <https://portal.mardi4nfdi.de/prop/direct/>
+SELECT ?item WHERE {{
+  ?item wdt:{prop} "{value}" .
+}}
+LIMIT 1
+"""
+        try:
+            resp = requests.get(
+                self._sparql_endpoint,
+                params={"query": query, "format": "json"},
+                headers={"Accept": "application/sparql-results+json"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            bindings = resp.json().get("results", {}).get("bindings", [])
+            if bindings:
+                uri = bindings[0]["item"]["value"]
+                return uri.rstrip("/").rsplit("/", 1)[-1]
+        except Exception as exc:
+            log.warning("SPARQL lookup for %s=%r failed: %s", prop, value, exc)
         return None
 
     def paper_has_tldr(self, paper_qid: str) -> bool:
@@ -394,4 +426,5 @@ def make_kg_client(config) -> KGClient:
         api_url=config.mediawiki_api_url,
         bot_user=config.mediawiki_bot_user,
         bot_password=config.mediawiki_bot_password,
+        sparql_endpoint=config.sparql_endpoint_url,
     )
