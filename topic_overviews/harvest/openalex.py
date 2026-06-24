@@ -60,7 +60,7 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
         doi_raw = (w.get("doi") or ids.get("doi") or "")
         doi = _strip_prefix(doi_raw, "https://doi.org/") or None
         authors = [
-            (a.get("author") or {}).get("display_name", "")
+            (a.get("author") or {}).get("display_name") or a.get("raw_author_name", "")
             for a in (w.get("authorships") or [])
         ]
         categories = [
