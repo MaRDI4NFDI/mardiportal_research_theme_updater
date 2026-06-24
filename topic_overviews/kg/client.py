@@ -312,7 +312,7 @@ LIMIT 1
             author_qid = self.author_resolver.resolve(name) if self.author_resolver else None
             if author_qid and author_qid not in existing_author_qids:
                 qual = Qualifiers()
-                qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=M.Q_LLM_AUTHOR_RESOLVER))
+                qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=M.Q_WORKFLOW))
                 item.add_claim(M.P_AUTHOR, value=author_qid, qualifiers=qual)
                 existing_author_qids.add(author_qid)
         if tldr:
@@ -527,7 +527,7 @@ LIMIT 1
                 log.debug("P16=%s already set on %s (author %r), skipping", author_qid, paper_qid, name)
                 continue
             existing_p16.add(author_qid)
-            r = s.post(
+            s.post(
                 self._api_url,
                 data={
                     "action": "wbcreateclaim", "entity": paper_qid,
@@ -536,22 +536,7 @@ LIMIT 1
                     "token": self._csrf(), "format": "json", "bot": "1",
                 },
                 timeout=30,
-            )
-            r.raise_for_status()
-            claim_guid = (r.json().get("claim") or {}).get("id")
-            if claim_guid:
-                s.post(
-                    self._api_url,
-                    data={
-                        "action": "wbsetqualifier", "claim": claim_guid,
-                        "snaktype": "value", "property": M.P_GENERATED_BY,
-                        "value": json.dumps(
-                            {"entity-type": "item", "id": M.Q_LLM_AUTHOR_RESOLVER}
-                        ),
-                        "token": self._csrf(), "format": "json", "bot": "1",
-                    },
-                    timeout=30,
-                ).raise_for_status()
+            ).raise_for_status()
             log.info(
                 "Enriched %s: added P16=%s via P676=%s (author %r)",
                 paper_qid, author_qid, zbmath_author_id, name,
