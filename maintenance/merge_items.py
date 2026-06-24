@@ -49,6 +49,35 @@ def _login(s: requests.Session, api: str, user: str, password: str) -> None:
         sys.exit(1)
 
 
+def _clear_sitelinks(s: requests.Session, api: str, item_qid: str, csrf_token: str) -> int:
+    """Remove all sitelinks from item_qid. Returns number removed."""
+    r = s.get(api, params={
+        "action": "wbgetentities", "ids": item_qid,
+        "props": "sitelinks", "format": "json",
+    }, timeout=30)
+    r.raise_for_status()
+    sitelinks = r.json()["entities"][item_qid].get("sitelinks", {})
+
+    removed = 0
+    for site in list(sitelinks):
+        r = s.post(api, data={
+            "action": "wbsetsitelink",
+            "id": item_qid,
+            "linksite": site,
+            "linktitle": "",
+            "token": csrf_token,
+            "format": "json",
+            "bot": "1",
+        }, timeout=30)
+        r.raise_for_status()
+        if r.json().get("success"):
+            removed += 1
+        else:
+            print(f"Warning: failed to remove sitelink '{site}' from {item_qid}", file=sys.stderr)
+
+    return removed
+
+
 def _deduplicate(s: requests.Session, api: str, item_qid: str, csrf_token: str) -> int:
     """Remove claims on item_qid where the same (property, datavalue) appears more than once.
 
@@ -119,7 +148,52 @@ def merge(api: str, user: str, password: str, target: str, duplicate: str) -> No
         print(f"Merge failed: {data['error']['info']}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Merged: {duplicate} → {target} (redirected).")
+    # Verify the duplicate was actually converted to a redirect.
+    r = s.get(api, params={
+        "action": "wbgetentities", "ids": duplicate,
+        "props": "info", "format": "json",
+    }, timeout=30)
+    r.raise_for_status()
+    entity_info = r.json()["entities"].get(duplicate, {})
+    if entity_info.get("type") == "redirect":
+        print(f"Merged: {duplicate} → {target} (redirected).")
+    else:
+        # wbmergeitems silently skips sitelinks when ignoreconflicts includes "sitelink"
+        # (the "mardi" sitelink is always present on both items). Clear them and retry.
+        token = _csrf(s, api)
+        cleared = _clear_sitelinks(s, api, duplicate, token)
+        if cleared:
+            print(f"Cleared {cleared} leftover sitelink(s) from {duplicate}, creating redirect...")
+
+        token = _csrf(s, api)
+        r = s.post(api, data={
+            "action": "wbcreateredirect",
+            "from": duplicate,
+            "to": target,
+            "token": token,
+            "format": "json",
+            "bot": "1",
+        }, timeout=30)
+        r.raise_for_status()
+        rd = r.json()
+        if rd.get("success"):
+            print(f"Merged: {duplicate} → {target} (redirected).")
+        else:
+            js = (
+                f"fetch('/w/api.php?action=query&meta=tokens&format=json')"
+                f".then(r=>r.json()).then(d=>fetch('/w/api.php',{{method:'POST',"
+                f"body:new URLSearchParams({{action:'wbcreateredirect',"
+                f"from:'{duplicate}',to:'{target}',"
+                f"token:d.query.tokens.csrftoken,bot:'1',format:'json'}})}}"
+                f").then(r=>r.json()).then(console.log))"
+            )
+            print(
+                f"Warning: claims were moved to {target}, but {duplicate} could not be converted "
+                f"to a redirect: {rd.get('error', {}).get('info', 'unknown error')}. "
+                f"An admin must finish this manually by running the following in the browser console "
+                f"while logged in at the portal:\n  {js}",
+                file=sys.stderr,
+            )
 
     token = _csrf(s, api)
     removed = _deduplicate(s, api, target, token)
