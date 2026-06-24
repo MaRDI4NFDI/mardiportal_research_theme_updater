@@ -42,10 +42,11 @@ def test_parse_atom_extracts_fields():
         published="2026-06-20",
         doi="10.1000/xyz",
     )
-    assert recs[1].arxiv_id == "2605.09999" and recs[1].doi is None
+    assert recs[1].arxiv_id == "2605.09999" and recs[1].doi == "10.48550/arXiv.2605.09999"
 
 
 class FakeResp:
+    status_code = 200
     def __init__(self, text): self.text = text
     def raise_for_status(self): pass
 

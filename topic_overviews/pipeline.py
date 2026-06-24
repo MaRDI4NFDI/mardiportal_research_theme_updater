@@ -10,6 +10,7 @@ from .state import State
 from .harvest.arxiv_search import search_records
 from .harvest.openalex import fetch_openalex_records, lookup_publication_date as _oa_date_lookup_default
 from .harvest.zbmath import fetch_zbmath_records
+from .kg import model as M
 from .kg.topics import Topic
 from .kg.citation_linker import (
     fetch_zbmath_references,
@@ -155,7 +156,7 @@ def _process_record(
             return False
         keywords = keyworder(record, model=model, api_key=config.anthropic_api_key, llm=llm)
         paper_qid = kg.import_paper(
-            record, tldr=tldr, keywords=keywords, generated_by=config.model_qid or None,
+            record, tldr=tldr, keywords=keywords, generated_by=M.Q_WORKFLOW,
         )
         imported_qids.append(paper_qid)
         log.info("Inserted %s paper %s as KG item %s", source_label, rid, paper_qid)
