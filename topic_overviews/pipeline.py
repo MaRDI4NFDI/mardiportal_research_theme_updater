@@ -8,7 +8,7 @@ import time
 from .config import Config
 from .state import State
 from .harvest.arxiv_search import search_records
-from .harvest.openalex import fetch_openalex_records
+from .harvest.openalex import fetch_openalex_records, lookup_publication_date as _oa_date_lookup_default
 from .harvest.zbmath import fetch_zbmath_records
 from .kg.topics import Topic
 from .llm.topic_classifier import classify_paper
@@ -184,6 +184,7 @@ def harvest_step(
     fetch_oa=None,
     fetch_zb=None,
     lookup_zb=None,
+    lookup_oa_date=None,
     classify=classify_paper,
     summarize=summarize_paper,
     keyworder=keywords_paper,
@@ -201,6 +202,7 @@ def harvest_step(
 
     from .harvest.zbmath import lookup_by_arxiv_id as _zb_lookup
     _lookup_zb = lookup_zb if lookup_zb is not None else _zb_lookup
+    _lookup_oa_date = lookup_oa_date if lookup_oa_date is not None else _oa_date_lookup_default
 
     # --- zbMATH pass (highest quality — runs first; records carry author codes for P676 resolution) ---
     _fetch_zb = fetch_zb or (lambda qs, sd, **kw: fetch_zbmath_records(qs, sd))
@@ -219,6 +221,17 @@ def harvest_step(
             query_imported = 0
             for record in _fetch_zb(zb_query, zb_since_days):
                 try:
+                    if record.doi or record.arxiv_id:
+                        full_date = _lookup_oa_date(
+                            record.doi, record.arxiv_id,
+                            email=config.openalex_email,
+                        )
+                        if full_date:
+                            log.info(
+                                "OpenAlex date enrichment for zbMATH %s: %s → %s",
+                                record.record_id, record.published, full_date,
+                            )
+                            record.published = full_date
                     did_import = _process_record(
                         record, "zbMATH", covering, config, state, kg,
                         classify, summarize, keyworder, llm, model,

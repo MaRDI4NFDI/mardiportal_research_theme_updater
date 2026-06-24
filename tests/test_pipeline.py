@@ -474,6 +474,98 @@ def test_ensure_theme_pages_does_not_hijack_existing_page():
     assert all(t != "Online Algorithms" for t, _ in pub.edited)
 
 
+def test_harvest_step_enriches_zbmath_date_from_openalex():
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    state = State()
+    kg = FakeKG()
+
+    zb_topic = Topic(qid="Q30", label="Numerics", description="", zbmath_query="cc:65-XX")
+    zb_paper = PaperRecord(
+        arxiv_id="", title="Finite Elements", abstract="", authors=["A. Author"],
+        categories=["65N30"], published="2026-01-01", doi="10.1234/fem", zbmath_id="ZB123",
+    )
+    enriched_dates = []
+
+    def fake_lookup_oa_date(doi, arxiv_id, *, email=""):
+        enriched_dates.append((doi, arxiv_id))
+        return "2026-03-15"
+
+    imported_published = []
+    original_import = kg.import_paper
+    def capturing_import(record, **kwargs):
+        imported_published.append(record.published)
+        return original_import(record, **kwargs)
+    kg.import_paper = capturing_import
+
+    pipeline.harvest_step(
+        cfg, state, topics=[zb_topic], kg=kg, model="test-model",
+        fetch=lambda config: iter([]),
+        fetch_zb=lambda qs, sd, **kw: iter([zb_paper]),
+        lookup_oa_date=fake_lookup_oa_date,
+        classify=lambda paper, topics, *, model, api_key, **kwargs: ["Q30"],
+        summarize=_summ("tldr"),
+        keyworder=_kw(["kw"]),
+    )
+
+    assert enriched_dates == [("10.1234/fem", "")]
+    assert imported_published == ["2026-03-15"]
+
+
+def test_harvest_step_skips_oa_date_lookup_when_no_identifiers():
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    state = State()
+    kg = FakeKG()
+
+    zb_topic = Topic(qid="Q30", label="Numerics", description="", zbmath_query="cc:65-XX")
+    zb_paper = PaperRecord(
+        arxiv_id="", title="No IDs Paper", abstract="", authors=[], categories=[],
+        published="2026-01-01", doi=None, zbmath_id="ZB999",
+    )
+    lookup_calls = []
+
+    pipeline.harvest_step(
+        cfg, state, topics=[zb_topic], kg=kg, model="test-model",
+        fetch=lambda config: iter([]),
+        fetch_zb=lambda qs, sd, **kw: iter([zb_paper]),
+        lookup_oa_date=lambda doi, arxiv_id, **kw: lookup_calls.append((doi, arxiv_id)) or None,
+        classify=lambda paper, topics, *, model, api_key, **kwargs: ["Q30"],
+        summarize=_summ("tldr"),
+        keyworder=_kw(["kw"]),
+    )
+
+    assert lookup_calls == []   # no identifiers → lookup never called
+
+
+def test_harvest_step_keeps_year_approximation_when_oa_date_not_found():
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    state = State()
+    kg = FakeKG()
+
+    zb_topic = Topic(qid="Q30", label="Numerics", description="", zbmath_query="cc:65-XX")
+    zb_paper = PaperRecord(
+        arxiv_id="", title="Unknown Date", abstract="", authors=[], categories=[],
+        published="2026-01-01", doi="10.bad/doi", zbmath_id="ZB888",
+    )
+    imported_published = []
+    original_import = kg.import_paper
+    def capturing_import(record, **kwargs):
+        imported_published.append(record.published)
+        return original_import(record, **kwargs)
+    kg.import_paper = capturing_import
+
+    pipeline.harvest_step(
+        cfg, state, topics=[zb_topic], kg=kg, model="test-model",
+        fetch=lambda config: iter([]),
+        fetch_zb=lambda qs, sd, **kw: iter([zb_paper]),
+        lookup_oa_date=lambda doi, arxiv_id, **kw: None,
+        classify=lambda paper, topics, *, model, api_key, **kwargs: ["Q30"],
+        summarize=_summ("tldr"),
+        keyworder=_kw(["kw"]),
+    )
+
+    assert imported_published == ["2026-01-01"]   # unchanged year approximation
+
+
 def test_ensure_theme_pages_dry_run_writes_nothing():
     cfg = load_config({"TOPIC_OVERVIEWS_DRY_RUN": "true"})
     pub = FakePublisher()

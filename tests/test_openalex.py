@@ -4,6 +4,7 @@ import json
 from topic_overviews.harvest.arxiv_oai import PaperRecord
 from topic_overviews.harvest.openalex import (
     fetch_openalex_records,
+    lookup_publication_date,
     parse_works_page,
     _reconstruct_abstract,
 )
@@ -53,8 +54,9 @@ def _page(works, next_cursor=None):
 
 
 class FakeResp:
-    def __init__(self, body):
+    def __init__(self, body, status_code=200):
         self._body = body
+        self.status_code = status_code
     def raise_for_status(self): pass
     def json(self): return json.loads(self._body)
 
@@ -66,6 +68,17 @@ class FakeSession:
     def get(self, url, params=None, timeout=None):
         self.calls.append(params or {})
         return FakeResp(self._pages.pop(0) if self._pages else _page([]))
+
+
+class FakeLookupSession:
+    """Session for lookup tests — tracks (url, params) and returns (status, body) pairs."""
+    def __init__(self, responses):
+        self._responses = list(responses)  # list of (status_code, dict)
+        self.calls = []
+    def get(self, url, params=None, timeout=None):
+        self.calls.append((url, params or {}))
+        status, body = self._responses.pop(0) if self._responses else (404, {})
+        return FakeResp(json.dumps(body), status_code=status)
 
 
 def test_reconstruct_abstract():
@@ -161,3 +174,70 @@ def test_fetch_sends_mailto_when_email_set():
         today=datetime.date(2026, 6, 21),
     ))
     assert session.calls[0].get("mailto") == "bot@example.com"
+
+
+# ---------------------------------------------------------------------------
+# lookup_publication_date
+# ---------------------------------------------------------------------------
+
+def test_lookup_date_by_doi_returns_full_date():
+    body = {"publication_date": "2026-03-15", "title": "Some paper"}
+    sess = FakeLookupSession([(200, body)])
+    result = lookup_publication_date(doi="10.1234/xyz", session=sess)
+    assert result == "2026-03-15"
+    url, params = sess.calls[0]
+    assert "10.1234/xyz" in url
+    assert "doi.org" in url
+
+
+def test_lookup_date_by_arxiv_id_fallback():
+    works_body = {"results": [{"publication_date": "2026-04-20", "title": "Some paper"}]}
+    sess = FakeLookupSession([(200, works_body)])
+    result = lookup_publication_date(arxiv_id="2604.01234", session=sess)
+    assert result == "2026-04-20"
+    url, params = sess.calls[0]
+    assert "ids.arxiv" in params.get("filter", "")
+    assert "2604.01234" in params.get("filter", "")
+
+
+def test_lookup_date_doi_preferred_over_arxiv():
+    doi_body = {"publication_date": "2026-03-15"}
+    sess = FakeLookupSession([(200, doi_body)])
+    result = lookup_publication_date(doi="10.1234/xyz", arxiv_id="2604.01234", session=sess)
+    assert result == "2026-03-15"
+    assert len(sess.calls) == 1   # only the DOI call was made
+
+
+def test_lookup_date_falls_back_to_arxiv_when_doi_404():
+    works_body = {"results": [{"publication_date": "2026-04-20"}]}
+    sess = FakeLookupSession([(404, {}), (200, works_body)])
+    result = lookup_publication_date(doi="10.bad/doi", arxiv_id="2604.01234", session=sess)
+    assert result == "2026-04-20"
+    assert len(sess.calls) == 2
+
+
+def test_lookup_date_returns_none_when_not_found():
+    sess = FakeLookupSession([(404, {})])
+    result = lookup_publication_date(doi="10.bad/doi", session=sess)
+    assert result is None
+
+
+def test_lookup_date_returns_none_when_no_identifiers():
+    sess = FakeLookupSession([])
+    result = lookup_publication_date(session=sess)
+    assert result is None
+    assert sess.calls == []
+
+
+def test_lookup_date_returns_none_on_empty_results():
+    sess = FakeLookupSession([(200, {"results": []})])
+    result = lookup_publication_date(arxiv_id="9999.99999", session=sess)
+    assert result is None
+
+
+def test_lookup_date_sends_mailto():
+    body = {"publication_date": "2026-03-15"}
+    sess = FakeLookupSession([(200, body)])
+    lookup_publication_date(doi="10.1234/xyz", session=sess, email="bot@example.com")
+    _, params = sess.calls[0]
+    assert params.get("mailto") == "bot@example.com"

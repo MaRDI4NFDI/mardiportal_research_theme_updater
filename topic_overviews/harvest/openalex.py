@@ -141,3 +141,49 @@ def fetch_openalex_records(
             return
         cursor = next_cursor
         sleep(1)  # OpenAlex polite pool
+
+
+def lookup_publication_date(
+    doi: str | None = None,
+    arxiv_id: str = "",
+    *,
+    session=None,
+    email: str = "",
+) -> str | None:
+    """Return the full publication_date (YYYY-MM-DD) from OpenAlex for a paper
+    identified by DOI or arXiv ID. Returns None if not found or on error.
+
+    Used to enrich zbMATH records, which only carry a publication year.
+    Tries DOI first (direct single-item lookup), then falls back to arXiv ID filter.
+    """
+    if not doi and not arxiv_id:
+        return None
+    sess = session or requests.Session()
+    extra = {"mailto": email} if email else {}
+    try:
+        if doi:
+            resp = sess.get(
+                f"{OPENALEX_API_URL}/https://doi.org/{doi}",
+                params=extra or None,
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                date = (resp.json().get("publication_date") or "")[:10]
+                if date:
+                    return date
+        if arxiv_id:
+            params = {
+                "filter": f"ids.arxiv:https://arxiv.org/abs/{arxiv_id}",
+                "per_page": "1",
+                **extra,
+            }
+            resp = sess.get(OPENALEX_API_URL, params=params, timeout=20)
+            if resp.status_code == 200:
+                works = resp.json().get("results") or []
+                if works:
+                    date = (works[0].get("publication_date") or "")[:10]
+                    if date:
+                        return date
+    except Exception as exc:
+        log.warning("OpenAlex date lookup failed (doi=%s arxiv=%s): %s", doi, arxiv_id, exc)
+    return None
