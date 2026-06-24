@@ -29,6 +29,7 @@ class Config:
     mediawiki_bot_password: str
     wikibase_url: str
     sparql_endpoint_url: str
+    s2_api_key: str
     dry_run: bool
 
 
@@ -59,5 +60,6 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         mediawiki_bot_password=env.get("MEDIAWIKI_BOT_PASSWORD", ""),
         wikibase_url=env.get("WIKIBASE_URL", ""),
         sparql_endpoint_url=env.get("SPARQL_ENDPOINT_URL", ""),
+        s2_api_key=env.get("TOPIC_OVERVIEWS_S2_API_KEY", ""),
         dry_run=_flag(env.get("TOPIC_OVERVIEWS_DRY_RUN", "false")),
     )

@@ -17,6 +17,8 @@ from .kg.citation_linker import (
     fetch_openalex_referenced_works,
     resolve_qids_by_zbmath_doc_ids,
     resolve_qids_by_openalex_ids,
+    fetch_s2_references,
+    resolve_s2_references,
 )
 from .llm.topic_classifier import classify_paper
 from .llm.summarizer import summarize_paper
@@ -223,6 +225,9 @@ def harvest_step(
     sparql_endpoint = config.sparql_endpoint_url or ""
     openalex_email = config.openalex_email or ""
 
+    mediawiki_api_url = config.mediawiki_api_url or ""
+    s2_api_key = config.s2_api_key or ""
+
     def _link_cites(paper_qid: str, record, zb_record=None) -> None:
         """Fetch cited paper IDs and write P223 claims, skipping silently on any error."""
         if not sparql_endpoint:
@@ -239,9 +244,19 @@ def harvest_step(
             )
             cited_qids = resolve_qids_by_openalex_ids(oa_work_ids, sparql_endpoint)
         else:
-            return
+            cited_qids = []
         if cited_qids:
             kg.link_citations(paper_qid, cited_qids)
+            return
+        # Third pass: Semantic Scholar fallback
+        s2_refs = fetch_s2_references(
+            arxiv_id=getattr(record, "arxiv_id", "") or "",
+            doi=getattr(record, "doi", "") or "",
+            api_key=s2_api_key,
+        )
+        s2_qids = resolve_s2_references(s2_refs, sparql_endpoint, mediawiki_api_url)
+        if s2_qids:
+            kg.link_citations(paper_qid, s2_qids, reference_qid=M.Q_SEMANTIC_SCHOLAR)
 
     # --- zbMATH pass (highest quality — runs first; records carry author codes for P676 resolution) ---
     _fetch_zb = fetch_zb or (lambda qs, sd, **kw: fetch_zbmath_records(qs, sd))

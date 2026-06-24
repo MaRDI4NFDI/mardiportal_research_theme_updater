@@ -413,10 +413,17 @@ LIMIT 1
                 paper_qid, author_qid, zbmath_author_id, name,
             )
 
-    def link_citations(self, paper_qid: str, cited_qids: list[str]) -> None:
+    def link_citations(
+        self,
+        paper_qid: str,
+        cited_qids: list[str],
+        reference_qid: str = "",
+    ) -> None:
         """Write P223 (cites work) claims from paper_qid to each cited QID, idempotently.
 
         Reads existing P223 claims first to avoid duplicates on re-runs.
+        If ``reference_qid`` is given, a ``P98=<reference_qid>`` ("stated in") reference
+        block is added to each newly written claim.
         """
         if not cited_qids:
             return
@@ -433,12 +440,20 @@ LIMIT 1
             qid = (c.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id")
             if qid:
                 existing.add(qid)
+        reference_snaks = json.dumps({
+            M.P_STATED_IN: [{
+                "snaktype": "value",
+                "property": M.P_STATED_IN,
+                "datavalue": {"type": "wikibase-entityid",
+                              "value": {"entity-type": "item", "id": reference_qid}},
+            }]
+        }) if reference_qid else None
         added = 0
         for cited_qid in cited_qids:
             if cited_qid in existing:
                 continue
             existing.add(cited_qid)
-            s.post(
+            resp = s.post(
                 self._api_url,
                 data={
                     "action": "wbcreateclaim", "entity": paper_qid,
@@ -447,10 +462,24 @@ LIMIT 1
                     "token": self._csrf(), "format": "json", "bot": "1",
                 },
                 timeout=30,
-            ).raise_for_status()
+            )
+            resp.raise_for_status()
+            if reference_snaks:
+                claim_guid = (resp.json().get("claim") or {}).get("id")
+                if claim_guid:
+                    s.post(
+                        self._api_url,
+                        data={
+                            "action": "wbsetreference", "statement": claim_guid,
+                            "snaks": reference_snaks,
+                            "token": self._csrf(), "format": "json", "bot": "1",
+                        },
+                        timeout=30,
+                    ).raise_for_status()
             added += 1
         if added:
-            log.info("link_citations: %s → %d new P223 claim(s)", paper_qid, added)
+            log.info("link_citations: %s → %d new P223 claim(s)%s", paper_qid, added,
+                     f" [stated in {reference_qid}]" if reference_qid else "")
 
     def link_topic(self, topic_qid: str, paper_qid: str) -> None:
         """Add the paper to the topic's ``has part(s)`` (P265) list, idempotently.
