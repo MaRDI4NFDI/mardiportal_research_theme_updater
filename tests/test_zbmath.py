@@ -142,25 +142,28 @@ def test_parse_with_arxiv():
     assert len(records) == 1
     r = records[0]
     assert r.arxiv_id == "2606.01234"
-    assert r.zbmath_id == "7266523"
+    assert r.zbmath_id == "2606.12345"        # identifier string → P225
+    assert r.zbmath_de_number == "7266523"    # numeric id → P1451
     assert r.title == "An Algorithm for Quantum Circuits"
     assert r.abstract == ""
     assert r.authors == ["Doe, Jane", "Smith, John"]
     assert r.zbmath_author_ids == [("Doe, Jane", "doe.jane.1"), ("Smith, John", "smith.john.1")]
-    assert r.categories == ["68W25", "81P68"]
+    assert r.categories == []                 # zbMATH records carry no arXiv categories
+    assert r.msc_codes == ["68W25", "81P68"]  # MSC codes → P226
     assert r.doi == "10.1234/example"
     assert r.published == "2026-01-01"
-    assert r.record_id == "2606.01234"   # arxiv_id takes precedence
+    assert r.record_id == "2606.01234"        # arxiv_id takes precedence
 
 
 def test_parse_without_arxiv():
     records = parse_documents_page([DOC_WITHOUT_ARXIV])
     r = records[0]
     assert r.arxiv_id == ""
-    assert r.zbmath_id == "9999999"
+    assert r.zbmath_id == "2606.99999"        # identifier string → P225
+    assert r.zbmath_de_number == "9999999"    # numeric id → P1451
     assert r.doi == "10.9999/prime"
     assert r.zbmath_author_ids == [("Euler, Leonhard", "euler.leonhard")]
-    assert r.record_id == "zbmath:9999999"
+    assert r.record_id == "zbmath:2606.99999"
 
 
 def test_parse_no_authors():
@@ -169,7 +172,8 @@ def test_parse_no_authors():
     assert r.authors == []
     assert r.zbmath_author_ids == []
     assert r.doi is None
-    assert r.zbmath_id == "1111111"
+    assert r.zbmath_id == "2606.11111"        # identifier string → P225
+    assert r.zbmath_de_number == "1111111"    # numeric id → P1451
 
 
 def test_parse_author_without_code():
@@ -253,7 +257,8 @@ def test_lookup_found():
     session = FakeSession([_response([DOC_WITH_ARXIV])])
     result = lookup_by_arxiv_id("2606.01234", session=session)
     assert result is not None
-    assert result.zbmath_id == "7266523"
+    assert result.zbmath_id == "2606.12345"      # identifier string → P225
+    assert result.zbmath_de_number == "7266523"  # numeric id → P1451
     assert result.arxiv_id == "2606.01234"
     assert result.zbmath_author_ids == [("Doe, Jane", "doe.jane.1"), ("Smith, John", "smith.john.1")]
     params = session.calls[0]["params"]

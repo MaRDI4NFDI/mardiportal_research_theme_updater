@@ -42,7 +42,10 @@ def parse_documents_page(docs: list[dict]) -> list[PaperRecord]:
     """Parse a list of document dicts from the zbMATH _search response."""
     records = []
     for d in docs:
-        zbmath_id = str(d.get("id") or "").strip()
+        # P225: string document identifier, e.g. "1541.68445"
+        zbmath_id = (d.get("identifier") or "").strip()
+        # P1451: numeric DE Number, e.g. "7860651"
+        zbmath_de_number = str(d.get("id") or "").strip()
 
         title_raw = d.get("title") or {}
         title = (
@@ -58,7 +61,8 @@ def parse_documents_page(docs: list[dict]) -> list[PaperRecord]:
             if a.get("name") and a.get("codes")
         ]
 
-        categories = [m["code"] for m in (d.get("msc") or []) if m.get("code")]
+        # MSC classification codes → P226 (not arXiv categories → P22)
+        msc_codes = [m["code"] for m in (d.get("msc") or []) if m.get("code")]
 
         doi = None
         arxiv_id = ""
@@ -73,6 +77,11 @@ def parse_documents_page(docs: list[dict]) -> list[PaperRecord]:
         year = str(d.get("year") or "").strip()
         published = f"{year}-01-01" if year else ""
 
+        zbmath_keywords = [kw for kw in (d.get("keywords") or []) if kw]
+        source = d.get("source") or {}
+        series = source.get("series") or []
+        journal_title = (series[0].get("title") or "").strip() if series else ""
+
         if not doi and arxiv_id:
             doi = f"10.48550/arXiv.{arxiv_id}"
         records.append(PaperRecord(
@@ -80,11 +89,15 @@ def parse_documents_page(docs: list[dict]) -> list[PaperRecord]:
             title=title,
             abstract="",
             authors=authors,
-            categories=categories,
+            categories=[],       # zbMATH records carry no arXiv category codes
             published=published,
             doi=doi,
             zbmath_id=zbmath_id,
+            zbmath_de_number=zbmath_de_number,
             zbmath_author_ids=zbmath_author_ids,
+            zbmath_keywords=zbmath_keywords,
+            journal_title=journal_title,
+            msc_codes=msc_codes,
         ))
     return records
 

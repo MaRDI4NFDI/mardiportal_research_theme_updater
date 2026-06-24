@@ -169,10 +169,14 @@ def _process_record(
             zb = lookup_zb(record.arxiv_id)
             if zb:
                 log.info(
-                    "zbMATH enrichment: found %s for arXiv:%s — adding P225 + P676 authors",
-                    zb.zbmath_id, record.arxiv_id,
+                    "zbMATH enrichment: found %s (DE:%s) for arXiv:%s — adding P225/P1451/P226 + P676 authors",
+                    zb.zbmath_id, zb.zbmath_de_number, record.arxiv_id,
                 )
-                kg.add_zbmath_enrichment(paper_qid, zb.zbmath_id, zb.zbmath_author_ids)
+                kg.add_zbmath_enrichment(
+                    paper_qid, zb.zbmath_id, zb.zbmath_author_ids,
+                    zbmath_de_number=zb.zbmath_de_number,
+                    msc_codes=zb.msc_codes,
+                )
         # Citation linking: resolve cited papers already in the KG and write P223 claims.
         if callable(link_cites_fn):
             try:

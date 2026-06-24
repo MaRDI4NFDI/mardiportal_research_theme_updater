@@ -25,8 +25,12 @@ class PaperRecord:
     published: str
     doi: str | None = None
     openalex_id: str = ""
-    zbmath_id: str = ""
+    zbmath_id: str = ""          # zbMATH Open document ID string, e.g. "1541.68445" → P225
+    zbmath_de_number: str = ""   # zbMATH DE Number (numeric), e.g. "7860651" → P1451
     zbmath_author_ids: list[tuple[str, str]] = field(default_factory=list)
+    zbmath_keywords: list[str] = field(default_factory=list)
+    journal_title: str = ""
+    msc_codes: list[str] = field(default_factory=list)
 
     @property
     def record_id(self) -> str:

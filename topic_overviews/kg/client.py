@@ -96,6 +96,7 @@ class KGClient:
             (M.P_DOI, record.doi or ""),
             (M.P_OPENALEX_ID, getattr(record, "openalex_id", "")),
             (M.P_ZBMATH_ID, getattr(record, "zbmath_id", "")),
+            (M.P_ZBMATH_DE_NUMBER, getattr(record, "zbmath_de_number", "")),
         ]
         for prop, value in checks:
             if not value:
@@ -206,6 +207,50 @@ LIMIT 1
             log.warning("Label SPARQL lookup for %r failed: %s", title, exc)
         return None
 
+    def _resolve_journal_qid(self, journal_title: str) -> str:
+        """Return KG QID for the journal whose English label matches *journal_title*, or ''.
+
+        Results are cached in-process so repeated calls for the same journal (common
+        when a batch of papers all come from the same journal) only hit SPARQL once.
+        """
+        if not journal_title:
+            return ""
+        if not hasattr(self, "_journal_cache"):
+            self._journal_cache: dict[str, str] = {}
+        if journal_title in self._journal_cache:
+            return self._journal_cache[journal_title]
+        escaped = journal_title.replace("\\", "\\\\").replace('"', '\\"')
+        query = f"""
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX wdt: <https://portal.mardi4nfdi.de/prop/direct/>
+PREFIX wd: <https://portal.mardi4nfdi.de/entity/>
+SELECT ?item WHERE {{
+  ?item rdfs:label "{escaped}"@en .
+  ?item wdt:{M.P_INSTANCE_OF} wd:{M.Q_SCIENTIFIC_JOURNAL} .
+}}
+LIMIT 1
+"""
+        qid = ""
+        try:
+            resp = requests.get(
+                self._sparql_endpoint,
+                params={"query": query, "format": "json"},
+                headers={"Accept": "application/sparql-results+json"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            bindings = resp.json().get("results", {}).get("bindings", [])
+            if bindings:
+                qid = bindings[0]["item"]["value"].rstrip("/").rsplit("/", 1)[-1]
+        except Exception as exc:
+            log.warning("Journal SPARQL lookup for %r failed: %s", journal_title, exc)
+        self._journal_cache[journal_title] = qid
+        if qid:
+            log.debug("Journal %r → %s", journal_title, qid)
+        else:
+            log.debug("Journal %r not found in KG", journal_title)
+        return qid
+
     def paper_has_tldr(self, paper_qid: str) -> bool:
         """Return whether the paper item already has a TL;DR claim."""
         item = self.mc.item.get(entity_id=paper_qid)
@@ -251,6 +296,8 @@ LIMIT 1
             item.add_claim(M.P_OPENALEX_ID, value=record.openalex_id)
         if getattr(record, "zbmath_id", ""):
             item.add_claim(M.P_ZBMATH_ID, value=record.zbmath_id)
+        if getattr(record, "zbmath_de_number", ""):
+            item.add_claim(M.P_ZBMATH_DE_NUMBER, value=record.zbmath_de_number)
         if record.doi:
             item.add_claim(M.P_DOI, value=record.doi)
         item.add_claim(M.P_TITLE, value=record.title)
@@ -258,6 +305,8 @@ LIMIT 1
             item.add_claim(M.P_PUBLICATION_DATE, value=to_wbi_time(record.published))
         for cat in record.categories:
             item.add_claim(M.P_ARXIV_CLASSIFICATION, value=cat)
+        for code in getattr(record, "msc_codes", None) or []:
+            item.add_claim(M.P_MSC_ID, value=code)
         for name in record.authors:
             item.add_claim(M.P_AUTHOR_NAME_STRING, value=name)
             author_qid = self.author_resolver.resolve(name) if self.author_resolver else None
@@ -275,6 +324,13 @@ LIMIT 1
                 item.add_claim(M.P_TLDR, value=tldr)
         for kw in keywords or []:
             item.add_claim(M.P_KEYWORDS, value=kw)
+        for kw in getattr(record, "zbmath_keywords", None) or []:
+            item.add_claim(M.P_ZBMATH_KEYWORDS, value=kw)
+        journal_title = getattr(record, "journal_title", "") or ""
+        if journal_title:
+            journal_qid = self._resolve_journal_qid(journal_title)
+            if journal_qid:
+                item.add_claim(M.P_PUBLISHED_IN, value=journal_qid)
         if generated_by:
             item.add_claim(M.P_GENERATED_BY, value=generated_by)  # bare local QID
 
@@ -324,38 +380,71 @@ LIMIT 1
         paper_qid: str,
         zbmath_id: str,
         zbmath_author_ids: list[tuple[str, str]],
+        zbmath_de_number: str = "",
+        msc_codes: list[str] | None = None,
     ) -> None:
         """Backfill zbMATH data onto an already-imported paper item.
 
-        Writes P225 (zbMATH document ID) via ``wbcreateclaim`` if not already
-        set, then for each author with a zbMATH Autorenkennung (P676) that
-        resolves to a KG person item, adds a P16 claim with a P1642 qualifier.
-        Uses the claims API throughout — safe on items with pre-existing claims.
+        Writes P225 (zbMATH document ID string), P1451 (zbMATH DE Number), and
+        P226 (MSC codes) if not already set, then for each author with a zbMATH
+        Autorenkennung (P676) that resolves to a KG person item, adds a P16 claim
+        with a P1642 qualifier.  Uses the claims API throughout — safe on items
+        with pre-existing claims.
         """
         s = self._get_session()
 
-        if zbmath_id:
+        def _write_if_missing(prop: str, value: str, label: str) -> None:
             r = s.get(
                 self._api_url,
-                params={
-                    "action": "wbgetclaims", "entity": paper_qid,
-                    "property": M.P_ZBMATH_ID, "format": "json",
-                },
+                params={"action": "wbgetclaims", "entity": paper_qid,
+                        "property": prop, "format": "json"},
                 timeout=30,
             )
             r.raise_for_status()
-            if not r.json().get("claims", {}).get(M.P_ZBMATH_ID):
+            if not r.json().get("claims", {}).get(prop):
                 s.post(
                     self._api_url,
                     data={
                         "action": "wbcreateclaim", "entity": paper_qid,
-                        "snaktype": "value", "property": M.P_ZBMATH_ID,
-                        "value": json.dumps(zbmath_id),
+                        "snaktype": "value", "property": prop,
+                        "value": json.dumps(value),
                         "token": self._csrf(), "format": "json", "bot": "1",
                     },
                     timeout=30,
                 ).raise_for_status()
-                log.info("Enriched %s: added P225=%s", paper_qid, zbmath_id)
+                log.info("Enriched %s: added %s=%s", paper_qid, label, value)
+
+        if zbmath_id:
+            _write_if_missing(M.P_ZBMATH_ID, zbmath_id, "P225")
+        if zbmath_de_number:
+            _write_if_missing(M.P_ZBMATH_DE_NUMBER, zbmath_de_number, "P1451")
+        for code in msc_codes or []:
+            r = s.get(
+                self._api_url,
+                params={"action": "wbgetclaims", "entity": paper_qid,
+                        "property": M.P_MSC_ID, "format": "json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            existing_msc = {
+                c["mainsnak"]["datavalue"]["value"]
+                for c in r.json().get("claims", {}).get(M.P_MSC_ID, [])
+                if c.get("mainsnak", {}).get("datavalue")
+            }
+            for code in msc_codes or []:
+                if code not in existing_msc:
+                    s.post(
+                        self._api_url,
+                        data={
+                            "action": "wbcreateclaim", "entity": paper_qid,
+                            "snaktype": "value", "property": M.P_MSC_ID,
+                            "value": json.dumps(code),
+                            "token": self._csrf(), "format": "json", "bot": "1",
+                        },
+                        timeout=30,
+                    ).raise_for_status()
+                    log.info("Enriched %s: added P226=%s", paper_qid, code)
+            break  # only one GET needed for existing MSC check
 
         # Fetch existing P16 claims once to avoid adding duplicate authors.
         existing_p16 = set()
