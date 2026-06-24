@@ -79,18 +79,32 @@ def search_records(
             page_size,
             cutoff_s,
         )
-        resp = session.get(
-            ARXIV_API_URL,
-            params={
-                "search_query": query,
-                "sortBy": "submittedDate",
-                "sortOrder": "descending",
-                "start": start,
-                "max_results": page_size,
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
+        for attempt in range(5):
+            resp = session.get(
+                ARXIV_API_URL,
+                params={
+                    "search_query": query,
+                    "sortBy": "submittedDate",
+                    "sortOrder": "descending",
+                    "start": start,
+                    "max_results": page_size,
+                },
+                timeout=60,
+            )
+            if resp.status_code == 429:
+                wait = 60 * (2 ** attempt)
+                log.warning(
+                    "arXiv returned 429 for query=%r (attempt %d/5); waiting %ds",
+                    query,
+                    attempt + 1,
+                    wait,
+                )
+                sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            resp.raise_for_status()
         records = parse_atom(resp.text)
         log.info("Got %d arXiv results for query=%r", len(records), query)
         if not records:
