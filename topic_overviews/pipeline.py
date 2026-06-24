@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import time
 
 from .config import Config
 from .state import State
@@ -287,7 +288,11 @@ def harvest_step(
         log.warning("OpenAlex harvest pass failed (%s) — continuing with arXiv", exc)
 
     # --- arXiv pass (fallback for papers not yet indexed by zbMATH or OpenAlex) ---
+    first_arxiv_query = True
     for harvest_config in _harvest_configs(config, topics):
+        if not first_arxiv_query:
+            time.sleep(3)
+        first_arxiv_query = False
         covering = [
             t for t in topics
             if (t.arxiv_query or config.arxiv_query).strip() == harvest_config.arxiv_query
