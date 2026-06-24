@@ -405,6 +405,45 @@ LIMIT 1
                 paper_qid, author_qid, zbmath_author_id, name,
             )
 
+    def link_citations(self, paper_qid: str, cited_qids: list[str]) -> None:
+        """Write P223 (cites work) claims from paper_qid to each cited QID, idempotently.
+
+        Reads existing P223 claims first to avoid duplicates on re-runs.
+        """
+        if not cited_qids:
+            return
+        s = self._get_session()
+        r = s.get(
+            self._api_url,
+            params={"action": "wbgetclaims", "entity": paper_qid,
+                    "property": M.P_CITES_WORK, "format": "json"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        existing: set[str] = set()
+        for c in r.json().get("claims", {}).get(M.P_CITES_WORK, []):
+            qid = (c.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id")
+            if qid:
+                existing.add(qid)
+        added = 0
+        for cited_qid in cited_qids:
+            if cited_qid in existing:
+                continue
+            existing.add(cited_qid)
+            s.post(
+                self._api_url,
+                data={
+                    "action": "wbcreateclaim", "entity": paper_qid,
+                    "snaktype": "value", "property": M.P_CITES_WORK,
+                    "value": json.dumps({"entity-type": "item", "id": cited_qid}),
+                    "token": self._csrf(), "format": "json", "bot": "1",
+                },
+                timeout=30,
+            ).raise_for_status()
+            added += 1
+        if added:
+            log.info("link_citations: %s → %d new P223 claim(s)", paper_qid, added)
+
     def link_topic(self, topic_qid: str, paper_qid: str) -> None:
         """Add the paper to the topic's ``has part(s)`` (P265) list, idempotently.
 

@@ -11,6 +11,12 @@ from .harvest.arxiv_search import search_records
 from .harvest.openalex import fetch_openalex_records, lookup_publication_date as _oa_date_lookup_default
 from .harvest.zbmath import fetch_zbmath_records
 from .kg.topics import Topic
+from .kg.citation_linker import (
+    fetch_zbmath_references,
+    fetch_openalex_referenced_works,
+    resolve_qids_by_zbmath_doc_ids,
+    resolve_qids_by_openalex_ids,
+)
 from .llm.topic_classifier import classify_paper
 from .llm.summarizer import summarize_paper
 from .llm.keyworder import keywords_paper
@@ -99,6 +105,7 @@ def _process_record(
     imported_qids: list,
     theme_added: dict,
     lookup_zb=None,
+    link_cites_fn=None,
 ) -> bool:
     """Classify, optionally import, and link one record. Returns True if imported."""
     rid = record.record_id
@@ -153,6 +160,7 @@ def _process_record(
         imported_qids.append(paper_qid)
         log.info("Inserted %s paper %s as KG item %s", source_label, rid, paper_qid)
         # Inline zbMATH enrichment for arXiv/OpenAlex records (adds P225 + P676 author resolution).
+        zb = None
         if callable(lookup_zb) and record.arxiv_id and not record.zbmath_id:
             zb = lookup_zb(record.arxiv_id)
             if zb:
@@ -161,6 +169,12 @@ def _process_record(
                     zb.zbmath_id, record.arxiv_id,
                 )
                 kg.add_zbmath_enrichment(paper_qid, zb.zbmath_id, zb.zbmath_author_ids)
+        # Citation linking: resolve cited papers already in the KG and write P223 claims.
+        if callable(link_cites_fn):
+            try:
+                link_cites_fn(paper_qid, record, zb)
+            except Exception as exc:
+                log.warning("Citation linking for %s failed: %s", paper_qid, exc)
         for topic_qid in matched:
             kg.link_topic(topic_qid, paper_qid)
             theme_added.setdefault(topic_qid, []).append((paper_qid, record.title))
@@ -204,6 +218,29 @@ def harvest_step(
     _lookup_zb = lookup_zb if lookup_zb is not None else _zb_lookup
     _lookup_oa_date = lookup_oa_date if lookup_oa_date is not None else _oa_date_lookup_default
 
+    sparql_endpoint = config.sparql_endpoint_url or ""
+    openalex_email = config.openalex_email or ""
+
+    def _link_cites(paper_qid: str, record, zb_record=None) -> None:
+        """Fetch cited paper IDs and write P223 claims, skipping silently on any error."""
+        if not sparql_endpoint:
+            return
+        zbmath_id = getattr(record, "zbmath_id", "") or (
+            zb_record.zbmath_id if zb_record else ""
+        )
+        if zbmath_id:
+            doc_ids = fetch_zbmath_references(zbmath_id)
+            cited_qids = resolve_qids_by_zbmath_doc_ids(doc_ids, sparql_endpoint)
+        elif getattr(record, "openalex_id", ""):
+            oa_work_ids = fetch_openalex_referenced_works(
+                record.openalex_id, email=openalex_email
+            )
+            cited_qids = resolve_qids_by_openalex_ids(oa_work_ids, sparql_endpoint)
+        else:
+            return
+        if cited_qids:
+            kg.link_citations(paper_qid, cited_qids)
+
     # --- zbMATH pass (highest quality — runs first; records carry author codes for P676 resolution) ---
     _fetch_zb = fetch_zb or (lambda qs, sd, **kw: fetch_zbmath_records(qs, sd))
     try:
@@ -236,6 +273,7 @@ def harvest_step(
                         record, "zbMATH", covering, config, state, kg,
                         classify, summarize, keyworder, llm, model,
                         topic_label, imported_titles, imported_qids, theme_added,
+                        link_cites_fn=_link_cites,
                     )
                 except PipelineError:
                     raise
@@ -281,6 +319,7 @@ def harvest_step(
                         classify, summarize, keyworder, llm, model,
                         topic_label, imported_titles, imported_qids, theme_added,
                         lookup_zb=_lookup_zb,
+                        link_cites_fn=_link_cites,
                     )
                 except PipelineError:
                     raise
@@ -324,6 +363,7 @@ def harvest_step(
                     classify, summarize, keyworder, llm, model,
                     topic_label, imported_titles, imported_qids, theme_added,
                     lookup_zb=_lookup_zb,
+                    link_cites_fn=_link_cites,
                 )
             except PipelineError:
                 raise
