@@ -157,6 +157,7 @@ def _process_record(
         keywords = keyworder(record, model=model, api_key=config.anthropic_api_key, llm=llm)
         paper_qid = kg.import_paper(
             record, tldr=tldr, keywords=keywords, generated_by=M.Q_WORKFLOW,
+            tldr_model_qid=config.model_qid or None,
         )
         imported_qids.append(paper_qid)
         log.info("Inserted %s paper %s as KG item %s", source_label, rid, paper_qid)

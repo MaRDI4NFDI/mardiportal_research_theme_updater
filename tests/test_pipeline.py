@@ -32,7 +32,7 @@ class FakeKG:
         self.links = []
         self.paper_qids = {}      # any identifier string -> QID
         self.paper_tldrs = set()
-    def import_paper(self, record, tldr=None, keywords=None, generated_by=None):
+    def import_paper(self, record, tldr=None, keywords=None, generated_by=None, tldr_model_qid=None):
         self.imported.append((record.arxiv_id, tldr, keywords)); return "Q999"
     def link_topic(self, topic_qid, paper_qid):
         self.links.append((topic_qid, paper_qid))
@@ -87,7 +87,7 @@ def test_harvest_step_logs_inserted_qids(caplog):
     def fake_classify(paper, topics, *, model, api_key, **kwargs):
         return ["Q11"]
 
-    kg.import_paper = lambda record, tldr=None, keywords=None, generated_by=None: "Q123"
+    kg.import_paper = lambda record, tldr=None, keywords=None, generated_by=None, tldr_model_qid=None: "Q123"
 
     with caplog.at_level(logging.INFO, logger="topic_overviews.pipeline"):
         count = pipeline.harvest_step(
