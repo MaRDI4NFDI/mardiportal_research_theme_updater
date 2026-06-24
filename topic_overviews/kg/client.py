@@ -235,9 +235,10 @@ LIMIT 1
             item = self.mc.item.new()
             item.labels.set("en", record.title[:250])
 
-        # Collect author QIDs already on the item to avoid duplicate P16 claims
-        # when re-processing a paper that was partially imported in an earlier run.
+        # Collect already-set single-value properties to avoid duplicates when
+        # re-processing a paper that was partially imported in an earlier run.
         existing_author_qids = set(item.get_value(M.P_AUTHOR) or [])
+        has_date = bool(item.get_value(M.P_PUBLICATION_DATE))
 
         item.add_claim(M.P_INSTANCE_OF, value=M.Q_SCHOLARLY_ARTICLE)
         item.add_claim(M.P_PROFILE_TYPE, value=M.Q_PUBLICATION_PROFILE)
@@ -250,7 +251,7 @@ LIMIT 1
         if record.doi:
             item.add_claim(M.P_DOI, value=record.doi)
         item.add_claim(M.P_TITLE, value=record.title)
-        if record.published:
+        if record.published and not has_date:
             item.add_claim(M.P_PUBLICATION_DATE, value=to_wbi_time(record.published))
         for cat in record.categories:
             item.add_claim(M.P_ARXIV_CLASSIFICATION, value=cat)

@@ -78,11 +78,11 @@ def test_to_wbi_time():
 def test_import_new_paper_writes_only_paper_statements():
     item = FakeItem()
     mc = FakeMC(existing=[], item=item)
-    qid = KGClient(mc).import_paper(PAPER)
+    kg = KGClient(mc)
+    kg.find_existing_paper = lambda record: None  # bypass HTTP lookups in tests
+    qid = kg.import_paper(PAPER)
 
     assert qid == "Q500"
-    # find_existing_paper tries arXiv ID then DOI before giving up (no OA/zbMATH IDs on this record)
-    assert mc.searched == [("P21", "2401.00001"), ("P27", "10.1000/xyz")]
     assert item.label == ("en", "A New Bound for Online Caching")
     assert ("P31", "Q56887") in item.claims          # instance of scholarly article
     assert ("P1460", "Q5976449") in item.claims      # MaRDI publication profile type
@@ -131,7 +131,9 @@ def test_import_paper_sets_one_keyword_claim_per_keyword():
 def test_import_existing_paper_reuses_item():
     item = FakeItem()
     mc = FakeMC(existing=["Q500"], item=item)
-    qid = KGClient(mc).import_paper(PAPER)
+    kg = KGClient(mc)
+    kg.find_existing_paper = lambda record: "Q500"  # bypass HTTP lookups in tests
+    qid = kg.import_paper(PAPER)
     assert qid == "Q500"
     # existing item fetched, not newly labelled
     assert item.label is None
