@@ -21,6 +21,9 @@ WORK_WITH_ARXIV = {
     "topics": [{"display_name": "Mathematical Research Data"}],
     "publication_date": "2026-06-15",
     "ids": {"arxiv": "https://arxiv.org/abs/2606.01234", "doi": "https://doi.org/10.1000/xyz"},
+    "primary_location": {
+        "source": {"display_name": "SIAM Journal on Computing", "type": "journal"}
+    },
 }
 
 WORK_WITHOUT_ARXIV = {
@@ -32,6 +35,9 @@ WORK_WITHOUT_ARXIV = {
     "topics": [],
     "publication_date": "2026-06-10",
     "ids": {"doi": "https://doi.org/10.9999/abc"},
+    "primary_location": {
+        "source": {"display_name": "arXiv", "type": "repository"}  # not a journal → ignored
+    },
 }
 
 WORK_OLD = {
@@ -100,6 +106,7 @@ def test_parse_works_page_with_arxiv_id():
     assert r.authors == ["Jane Doe", "John Smith"]
     assert r.published == "2026-06-15"
     assert r.doi == "10.1000/xyz"
+    assert r.journal_title == "SIAM Journal on Computing"
     assert r.record_id == "2606.01234"   # arxiv_id takes precedence
 
 def test_parse_works_page_without_arxiv_id():
@@ -109,6 +116,7 @@ def test_parse_works_page_without_arxiv_id():
     assert r.openalex_id == "W2222222222"
     assert r.record_id == "openalex:W2222222222"
     assert r.doi == "10.9999/abc"
+    assert r.journal_title == ""   # repository source type → not a journal
 
 def test_fetch_stops_at_date_boundary():
     session = FakeSession([_page([WORK_WITH_ARXIV, WORK_OLD])])

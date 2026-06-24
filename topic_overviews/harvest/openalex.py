@@ -68,6 +68,13 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
             for t in (w.get("topics") or [])
             if t.get("display_name")
         ]
+        primary = w.get("primary_location") or {}
+        source = primary.get("source") or {}
+        journal_title = (
+            source.get("display_name", "").strip()
+            if source.get("type") == "journal"
+            else ""
+        )
         records.append(PaperRecord(
             arxiv_id=arxiv_id,
             title=(w.get("title") or "").strip(),
@@ -77,6 +84,7 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
             published=(w.get("publication_date") or "")[:10],
             doi=doi,
             openalex_id=openalex_id,
+            journal_title=journal_title,
         ))
     return records
 
