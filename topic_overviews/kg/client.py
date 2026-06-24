@@ -382,14 +382,17 @@ LIMIT 1
         zbmath_author_ids: list[tuple[str, str]],
         zbmath_de_number: str = "",
         msc_codes: list[str] | None = None,
+        zbmath_keywords: list[str] | None = None,
+        journal_title: str = "",
     ) -> None:
         """Backfill zbMATH data onto an already-imported paper item.
 
-        Writes P225 (zbMATH document ID string), P1451 (zbMATH DE Number), and
-        P226 (MSC codes) if not already set, then for each author with a zbMATH
-        Autorenkennung (P676) that resolves to a KG person item, adds a P16 claim
-        with a P1642 qualifier.  Uses the claims API throughout — safe on items
-        with pre-existing claims.
+        Writes P225 (zbMATH document ID string), P1451 (zbMATH DE Number),
+        P226 (MSC codes), P1450 (zbMATH keywords), and P200 (published in —
+        when the journal is found in the KG) if not already set, then for each
+        author with a zbMATH Autorenkennung (P676) that resolves to a KG person
+        item, adds a P16 claim with a P1642 qualifier.  Uses the claims API
+        throughout — safe on items with pre-existing claims.
         """
         s = self._get_session()
 
@@ -445,6 +448,58 @@ LIMIT 1
                     ).raise_for_status()
                     log.info("Enriched %s: added P226=%s", paper_qid, code)
             break  # only one GET needed for existing MSC check
+
+        # P1450 zbMATH keywords
+        if zbmath_keywords:
+            r = s.get(
+                self._api_url,
+                params={"action": "wbgetclaims", "entity": paper_qid,
+                        "property": M.P_ZBMATH_KEYWORDS, "format": "json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            existing_kw = {
+                c["mainsnak"]["datavalue"]["value"]
+                for c in r.json().get("claims", {}).get(M.P_ZBMATH_KEYWORDS, [])
+                if c.get("mainsnak", {}).get("datavalue")
+            }
+            for kw in zbmath_keywords:
+                if kw not in existing_kw:
+                    s.post(
+                        self._api_url,
+                        data={
+                            "action": "wbcreateclaim", "entity": paper_qid,
+                            "snaktype": "value", "property": M.P_ZBMATH_KEYWORDS,
+                            "value": json.dumps(kw),
+                            "token": self._csrf(), "format": "json", "bot": "1",
+                        },
+                        timeout=30,
+                    ).raise_for_status()
+                    log.info("Enriched %s: added P1450=%r", paper_qid, kw)
+
+        # P200 published in (journal item)
+        if journal_title:
+            r = s.get(
+                self._api_url,
+                params={"action": "wbgetclaims", "entity": paper_qid,
+                        "property": M.P_PUBLISHED_IN, "format": "json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            if not r.json().get("claims", {}).get(M.P_PUBLISHED_IN):
+                journal_qid = self._resolve_journal_qid(journal_title)
+                if journal_qid:
+                    s.post(
+                        self._api_url,
+                        data={
+                            "action": "wbcreateclaim", "entity": paper_qid,
+                            "snaktype": "value", "property": M.P_PUBLISHED_IN,
+                            "value": json.dumps({"entity-type": "item", "id": journal_qid}),
+                            "token": self._csrf(), "format": "json", "bot": "1",
+                        },
+                        timeout=30,
+                    ).raise_for_status()
+                    log.info("Enriched %s: added P200=%s (%r)", paper_qid, journal_qid, journal_title)
 
         # Fetch existing P16 claims once to avoid adding duplicate authors.
         existing_p16 = set()

@@ -176,6 +176,8 @@ def _process_record(
                     paper_qid, zb.zbmath_id, zb.zbmath_author_ids,
                     zbmath_de_number=zb.zbmath_de_number,
                     msc_codes=zb.msc_codes,
+                    zbmath_keywords=zb.zbmath_keywords,
+                    journal_title=zb.journal_title,
                 )
         # Citation linking: resolve cited papers already in the KG and write P223 claims.
         if callable(link_cites_fn):
