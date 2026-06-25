@@ -107,14 +107,16 @@ def fetch_openalex_referenced_works_by_arxiv(arxiv_id: str, *, session=None, ema
         return []
 
 
-def fetch_crossref_references(doi: str, *, session=None) -> list[str]:
-    """Return DOIs of works cited by this paper, fetched from the Crossref REST API.
+def fetch_crossref_data(doi: str, *, session=None) -> dict:
+    """Fetch metadata from the Crossref REST API for a paper identified by DOI.
 
+    Returns a dict with keys ``reference_dois`` (list[str]) and ``license_url`` (str).
     Only meaningful for papers with a real publisher DOI (not arXiv or Zenodo).
-    Returns an empty list on 404 or error.
+    Returns empty values on 404 or error.
     """
+    empty: dict = {"reference_dois": [], "license_url": ""}
     if not doi or doi.lower().startswith(_NON_CROSSREF_DOI_PREFIXES):
-        return []
+        return empty
     sess = session or requests.Session()
     try:
         resp = sess.get(
@@ -123,15 +125,23 @@ def fetch_crossref_references(doi: str, *, session=None) -> list[str]:
             timeout=30,
         )
         if resp.status_code == 404:
-            return []
+            return empty
         resp.raise_for_status()
-        refs = resp.json().get("message", {}).get("reference", [])
+        msg = resp.json().get("message", {})
+        refs = msg.get("reference", [])
         dois = [r["DOI"] for r in refs if r.get("DOI")]
-        log.debug("Crossref %s: %d reference(s) with DOI (of %d total)", doi, len(dois), len(refs))
-        return dois
+        licenses = msg.get("license", [])
+        license_url = licenses[0].get("URL", "") if licenses else ""
+        log.debug("Crossref %s: %d reference(s) with DOI, license=%s", doi, len(dois), license_url)
+        return {"reference_dois": dois, "license_url": license_url}
     except Exception as exc:
-        log.warning("Crossref references fetch for %s failed: %s", doi, exc)
-        return []
+        log.warning("Crossref data fetch for %s failed: %s", doi, exc)
+        return empty
+
+
+def fetch_crossref_references(doi: str, *, session=None) -> list[str]:
+    """Return DOIs of works cited by this paper. Convenience wrapper around fetch_crossref_data."""
+    return fetch_crossref_data(doi, session=session)["reference_dois"]
 
 
 def resolve_qids_by_dois(

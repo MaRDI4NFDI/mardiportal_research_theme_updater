@@ -75,6 +75,16 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
             if source.get("type") == "journal"
             else ""
         )
+        oa = w.get("open_access") or {}
+        oa_status = oa.get("oa_status") or ""
+        concepts = [
+            c["display_name"] for c in (w.get("concepts") or [])
+            if c.get("display_name") and c.get("score", 0) >= 0.3
+        ]
+        openalex_keywords = [
+            k["display_name"] for k in (w.get("keywords") or [])
+            if k.get("display_name")
+        ]
         records.append(PaperRecord(
             arxiv_id=arxiv_id,
             title=(w.get("title") or "").strip(),
@@ -85,6 +95,9 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
             doi=doi,
             openalex_id=openalex_id,
             journal_title=journal_title,
+            oa_status=oa_status,
+            concepts=concepts,
+            openalex_keywords=openalex_keywords,
         ))
     return records
 
@@ -195,3 +208,62 @@ def lookup_publication_date(
     except Exception as exc:
         log.warning("OpenAlex date lookup failed (doi=%s arxiv=%s): %s", doi, arxiv_id, exc)
     return None
+
+
+def lookup_openalex_enrichment(
+    doi: str | None = None,
+    arxiv_id: str = "",
+    *,
+    session=None,
+    email: str = "",
+) -> dict | None:
+    """Fetch OpenAlex enrichment fields for a paper identified by DOI or arXiv ID.
+
+    Returns a dict with keys ``published``, ``oa_status``, ``concepts``,
+    ``openalex_keywords``, or None if the paper is not found.
+    Makes a single API call reused for all fields.
+    """
+    if not doi and not arxiv_id:
+        return None
+    sess = session or requests.Session()
+    extra = {"mailto": email} if email else {}
+    work: dict | None = None
+    try:
+        if doi:
+            resp = sess.get(
+                f"{OPENALEX_API_URL}/https://doi.org/{doi}",
+                params=extra or None,
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                work = resp.json()
+        if work is None and arxiv_id:
+            params = {
+                "filter": f"ids.arxiv:https://arxiv.org/abs/{arxiv_id}",
+                "per_page": "1",
+                **extra,
+            }
+            resp = sess.get(OPENALEX_API_URL, params=params, timeout=20)
+            if resp.status_code == 200:
+                results = resp.json().get("results") or []
+                work = results[0] if results else None
+    except Exception as exc:
+        log.warning("OpenAlex enrichment lookup failed (doi=%s arxiv=%s): %s", doi, arxiv_id, exc)
+        return None
+    if work is None:
+        return None
+    oa = work.get("open_access") or {}
+    concepts = [
+        c["display_name"] for c in (work.get("concepts") or [])
+        if c.get("display_name") and c.get("score", 0) >= 0.3
+    ]
+    openalex_keywords = [
+        k["display_name"] for k in (work.get("keywords") or [])
+        if k.get("display_name")
+    ]
+    return {
+        "published": (work.get("publication_date") or "")[:10],
+        "oa_status": oa.get("oa_status") or "",
+        "concepts": concepts,
+        "openalex_keywords": openalex_keywords,
+    }

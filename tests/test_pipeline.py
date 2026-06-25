@@ -488,7 +488,7 @@ def test_harvest_step_enriches_zbmath_date_from_openalex():
 
     def fake_lookup_oa_date(doi, arxiv_id, *, email=""):
         enriched_dates.append((doi, arxiv_id))
-        return "2026-03-15"
+        return {"published": "2026-03-15", "oa_status": "", "concepts": [], "openalex_keywords": []}
 
     imported_published = []
     original_import = kg.import_paper
@@ -501,7 +501,7 @@ def test_harvest_step_enriches_zbmath_date_from_openalex():
         cfg, state, topics=[zb_topic], kg=kg, model="test-model",
         fetch=lambda config: iter([]),
         fetch_zb=lambda qs, sd, **kw: iter([zb_paper]),
-        lookup_oa_date=fake_lookup_oa_date,
+        lookup_oa_enrichment=fake_lookup_oa_date,
         classify=lambda paper, topics, *, model, api_key, **kwargs: ["Q30"],
         summarize=_summ("tldr"),
         keyworder=_kw(["kw"]),
@@ -527,7 +527,7 @@ def test_harvest_step_skips_oa_date_lookup_when_no_identifiers():
         cfg, state, topics=[zb_topic], kg=kg, model="test-model",
         fetch=lambda config: iter([]),
         fetch_zb=lambda qs, sd, **kw: iter([zb_paper]),
-        lookup_oa_date=lambda doi, arxiv_id, **kw: lookup_calls.append((doi, arxiv_id)) or None,
+        lookup_oa_enrichment=lambda doi, arxiv_id, **kw: lookup_calls.append((doi, arxiv_id)) or None,
         classify=lambda paper, topics, *, model, api_key, **kwargs: ["Q30"],
         summarize=_summ("tldr"),
         keyworder=_kw(["kw"]),
@@ -557,7 +557,7 @@ def test_harvest_step_keeps_year_approximation_when_oa_date_not_found():
         cfg, state, topics=[zb_topic], kg=kg, model="test-model",
         fetch=lambda config: iter([]),
         fetch_zb=lambda qs, sd, **kw: iter([zb_paper]),
-        lookup_oa_date=lambda doi, arxiv_id, **kw: None,
+        lookup_oa_enrichment=lambda doi, arxiv_id, **kw: None,
         classify=lambda paper, topics, *, model, api_key, **kwargs: ["Q30"],
         summarize=_summ("tldr"),
         keyworder=_kw(["kw"]),

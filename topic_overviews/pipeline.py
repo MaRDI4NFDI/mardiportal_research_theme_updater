@@ -8,14 +8,14 @@ import time
 from .config import Config
 from .state import State
 from .harvest.arxiv_search import search_records
-from .harvest.openalex import fetch_openalex_records, lookup_publication_date as _oa_date_lookup_default
+from .harvest.openalex import fetch_openalex_records, lookup_openalex_enrichment
 from .harvest.zbmath import fetch_zbmath_records
 from .kg import model as M
 from .kg.topics import Topic
 from .kg.citation_linker import (
     fetch_zbmath_references,
     fetch_openalex_referenced_works,
-    fetch_crossref_references,
+    fetch_crossref_data,
     resolve_qids_by_zbmath_doc_ids,
     resolve_qids_by_openalex_ids,
     resolve_qids_by_dois,
@@ -180,6 +180,7 @@ def _process_record(
                     msc_codes=zb.msc_codes,
                     zbmath_keywords=zb.zbmath_keywords,
                     journal_title=zb.journal_title,
+                    license_url=zb.license_url,
                 )
         # Citation linking: resolve cited papers already in the KG and write P223 claims.
         if callable(link_cites_fn):
@@ -210,7 +211,7 @@ def harvest_step(
     fetch_oa=None,
     fetch_zb=None,
     lookup_zb=None,
-    lookup_oa_date=None,
+    lookup_oa_enrichment=None,
     classify=classify_paper,
     summarize=summarize_paper,
     keyworder=keywords_paper,
@@ -228,7 +229,7 @@ def harvest_step(
 
     from .harvest.zbmath import lookup_by_arxiv_id as _zb_lookup
     _lookup_zb = lookup_zb if lookup_zb is not None else _zb_lookup
-    _lookup_oa_date = lookup_oa_date if lookup_oa_date is not None else _oa_date_lookup_default
+    _lookup_oa_enrichment = lookup_oa_enrichment if lookup_oa_enrichment is not None else lookup_openalex_enrichment
 
     sparql_endpoint = config.sparql_endpoint_url or ""
     openalex_email = config.openalex_email or ""
@@ -254,8 +255,13 @@ def harvest_step(
 
         # 2. Crossref (publisher DOIs only — more complete than OpenAlex for journal papers)
         if not cited_qids and doi:
-            ref_dois = fetch_crossref_references(doi)
-            cited_qids = resolve_qids_by_dois(ref_dois, sparql_endpoint)
+            crossref = fetch_crossref_data(doi)
+            cited_qids = resolve_qids_by_dois(crossref["reference_dois"], sparql_endpoint)
+            if crossref["license_url"] and not config.dry_run:
+                try:
+                    kg.add_crossref_license(paper_qid, crossref["license_url"])
+                except Exception as exc:
+                    log.warning("Failed to write Crossref license for %s: %s", paper_qid, exc)
 
         # 3. OpenAlex (covers arXiv preprints and papers not in Crossref)
         if not cited_qids and getattr(record, "openalex_id", ""):
@@ -296,16 +302,20 @@ def harvest_step(
             for record in _fetch_zb(zb_query, zb_since_days):
                 try:
                     if record.doi or record.arxiv_id:
-                        full_date = _lookup_oa_date(
+                        oa_enrichment = _lookup_oa_enrichment(
                             record.doi, record.arxiv_id,
                             email=config.openalex_email,
                         )
-                        if full_date:
-                            log.info(
-                                "OpenAlex date enrichment for zbMATH %s: %s → %s",
-                                record.record_id, record.published, full_date,
-                            )
-                            record.published = full_date
+                        if oa_enrichment:
+                            if oa_enrichment["published"]:
+                                log.info(
+                                    "OpenAlex date enrichment for zbMATH %s: %s → %s",
+                                    record.record_id, record.published, oa_enrichment["published"],
+                                )
+                                record.published = oa_enrichment["published"]
+                            record.oa_status = oa_enrichment["oa_status"]
+                            record.concepts = oa_enrichment["concepts"]
+                            record.openalex_keywords = oa_enrichment["openalex_keywords"]
                     did_import = _process_record(
                         record, "zbMATH", covering, config, state, kg,
                         classify, summarize, keyworder, llm, model,

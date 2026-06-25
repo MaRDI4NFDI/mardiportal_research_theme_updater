@@ -331,6 +331,16 @@ LIMIT 1
             item.add_claim(M.P_KEYWORDS, value=kw)
         for kw in getattr(record, "zbmath_keywords", None) or []:
             item.add_claim(M.P_ZBMATH_KEYWORDS, value=kw)
+        for kw in getattr(record, "openalex_keywords", None) or []:
+            item.add_claim(M.P_KEYWORDS, value=kw)
+        for concept in getattr(record, "concepts", None) or []:
+            item.add_claim(M.P_CONCEPTS, value=concept)
+        oa_status = getattr(record, "oa_status", "") or ""
+        if oa_status and oa_status in M.OA_STATUS_MAP:
+            item.add_claim(M.P_OA_STATUS, value=M.OA_STATUS_MAP[oa_status])
+        license_url = getattr(record, "license_url", "") or ""
+        if license_url:
+            item.add_claim(M.P_LICENSE, value=license_url)
         journal_title = getattr(record, "journal_title", "") or ""
         if journal_title:
             journal_qid = self._resolve_journal_qid(journal_title)
@@ -390,6 +400,7 @@ LIMIT 1
         msc_codes: list[str] | None = None,
         zbmath_keywords: list[str] | None = None,
         journal_title: str = "",
+        license_url: str = "",
     ) -> None:
         """Backfill zbMATH data onto an already-imported paper item.
 
@@ -428,6 +439,8 @@ LIMIT 1
             _write_if_missing(M.P_ZBMATH_ID, zbmath_id, "P225")
         if zbmath_de_number:
             _write_if_missing(M.P_ZBMATH_DE_NUMBER, zbmath_de_number, "P1451")
+        if license_url:
+            _write_if_missing(M.P_LICENSE, license_url, "P163")
         for code in msc_codes or []:
             r = http_get(
                 s,
@@ -552,6 +565,32 @@ LIMIT 1
                 "Enriched %s: added P16=%s via P676=%s (author %r)",
                 paper_qid, author_qid, zbmath_author_id, name,
             )
+
+    def add_crossref_license(self, paper_qid: str, license_url: str) -> None:
+        """Write P163 (license URL) from Crossref if not already set."""
+        if not license_url:
+            return
+        s = self._get_session()
+        r = http_get(
+            s,
+            self._api_url,
+            params={"action": "wbgetclaims", "entity": paper_qid,
+                    "property": M.P_LICENSE, "format": "json"},
+            timeout=30,
+        )
+        if not r.json().get("claims", {}).get(M.P_LICENSE):
+            http_post(
+                s,
+                self._api_url,
+                data={
+                    "action": "wbcreateclaim", "entity": paper_qid,
+                    "snaktype": "value", "property": M.P_LICENSE,
+                    "value": json.dumps(license_url),
+                    "token": self._csrf(), "format": "json", "bot": "1",
+                },
+                timeout=30,
+            )
+            log.info("Added P163 (license) to %s: %s", paper_qid, license_url)
 
     def link_citations(
         self,

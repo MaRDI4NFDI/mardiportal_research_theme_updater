@@ -31,6 +31,10 @@ class PaperRecord:
     zbmath_keywords: list[str] = field(default_factory=list)
     journal_title: str = ""
     msc_codes: list[str] = field(default_factory=list)
+    oa_status: str = ""                                          # OpenAlex oa_status string
+    concepts: list[str] = field(default_factory=list)           # OpenAlex concept display names
+    openalex_keywords: list[str] = field(default_factory=list)  # OpenAlex keyword display names
+    license_url: str = ""                                        # license URL from zbMATH or Crossref
 
     @property
     def record_id(self) -> str:

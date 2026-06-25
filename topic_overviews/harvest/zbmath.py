@@ -81,6 +81,8 @@ def parse_documents_page(docs: list[dict]) -> list[PaperRecord]:
         source = d.get("source") or {}
         series = source.get("series") or []
         journal_title = (series[0].get("title") or "").strip() if series else ""
+        license_urls = [u for u in (d.get("license") or []) if u]
+        license_url = license_urls[0] if license_urls else ""
 
         if not doi and arxiv_id:
             doi = f"10.48550/arXiv.{arxiv_id}"
@@ -98,6 +100,7 @@ def parse_documents_page(docs: list[dict]) -> list[PaperRecord]:
             zbmath_keywords=zbmath_keywords,
             journal_title=journal_title,
             msc_codes=msc_codes,
+            license_url=license_url,
         ))
     return records
 
