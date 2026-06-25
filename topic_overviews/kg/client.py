@@ -12,6 +12,7 @@ import requests
 
 from ..http_utils import http_get, http_post
 
+from wikibaseintegrator.datatypes import ExternalID as WBExternalID
 from wikibaseintegrator.datatypes import Item as WBItem
 from wikibaseintegrator.models import Qualifiers
 
@@ -334,7 +335,13 @@ LIMIT 1
         for kw in getattr(record, "openalex_keywords", None) or []:
             item.add_claim(M.P_KEYWORDS, value=kw)
         for concept in getattr(record, "concepts", None) or []:
-            item.add_claim(M.P_CONCEPTS, value=concept)
+            display_name, wikidata_qid = concept if isinstance(concept, tuple) else (concept, "")
+            if wikidata_qid:
+                qual = Qualifiers()
+                qual.add(WBExternalID(prop_nr=M.P_WIKIDATA_QID, value=wikidata_qid))
+                item.add_claim(M.P_CONCEPTS, value=display_name, qualifiers=qual)
+            else:
+                item.add_claim(M.P_CONCEPTS, value=display_name)
         oa_status = getattr(record, "oa_status", "") or ""
         if oa_status and oa_status in M.OA_STATUS_MAP:
             item.add_claim(M.P_OA_STATUS, value=M.OA_STATUS_MAP[oa_status])

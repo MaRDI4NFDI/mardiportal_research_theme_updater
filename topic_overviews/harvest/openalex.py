@@ -23,6 +23,14 @@ OPENALEX_API_URL = "https://api.openalex.org/works"
 log = logging.getLogger(__name__)
 
 
+def _wikidata_qid(url: str) -> str:
+    """Extract bare QID from a Wikidata entity URL, e.g. '.../wiki/Q2539' → 'Q2539'."""
+    if not url:
+        return ""
+    part = url.rstrip("/").rsplit("/", 1)[-1]
+    return part if part.startswith("Q") else ""
+
+
 def _reconstruct_abstract(inv: dict | None) -> str:
     if not inv:
         return ""
@@ -63,11 +71,7 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
             (a.get("author") or {}).get("display_name") or a.get("raw_author_name", "")
             for a in (w.get("authorships") or [])
         ]
-        categories = [
-            t.get("display_name", "")
-            for t in (w.get("topics") or [])
-            if t.get("display_name")
-        ]
+        categories: list[str] = []  # OpenAlex topics are not arXiv category codes
         primary = w.get("primary_location") or {}
         source = primary.get("source") or {}
         journal_title = (
@@ -78,7 +82,8 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
         oa = w.get("open_access") or {}
         oa_status = oa.get("oa_status") or ""
         concepts = [
-            c["display_name"] for c in (w.get("concepts") or [])
+            (c["display_name"], _wikidata_qid(c.get("wikidata") or ""))
+            for c in (w.get("concepts") or [])
             if c.get("display_name") and c.get("score", 0) >= 0.3
         ]
         openalex_keywords = [
@@ -254,7 +259,8 @@ def lookup_openalex_enrichment(
         return None
     oa = work.get("open_access") or {}
     concepts = [
-        c["display_name"] for c in (work.get("concepts") or [])
+        (c["display_name"], _wikidata_qid(c.get("wikidata") or ""))
+        for c in (work.get("concepts") or [])
         if c.get("display_name") and c.get("score", 0) >= 0.3
     ]
     openalex_keywords = [

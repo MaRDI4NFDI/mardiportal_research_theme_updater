@@ -32,7 +32,7 @@ class PaperRecord:
     journal_title: str = ""
     msc_codes: list[str] = field(default_factory=list)
     oa_status: str = ""                                          # OpenAlex oa_status string
-    concepts: list[str] = field(default_factory=list)           # OpenAlex concept display names
+    concepts: list[tuple[str, str]] = field(default_factory=list)  # OpenAlex (display_name, wikidata_qid)
     openalex_keywords: list[str] = field(default_factory=list)  # OpenAlex keyword display names
     license_url: str = ""                                        # license URL from zbMATH or Crossref
 
