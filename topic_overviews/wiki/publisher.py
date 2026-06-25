@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import requests
 
+from ..http_utils import http_get, http_post
+
 
 class WikiPublisher:
     def __init__(self, api_url: str, user: str, password: str, session=None):
@@ -12,18 +14,19 @@ class WikiPublisher:
         self.session = session or requests.Session()
 
     def _get_token(self, kind: str) -> str:
-        resp = self.session.get(
+        resp = http_get(
+            self.session,
             self.api_url,
             params={"action": "query", "meta": "tokens", "type": kind, "format": "json"},
             timeout=60,
         )
-        resp.raise_for_status()
         key = "logintoken" if kind == "login" else "csrftoken"
         return resp.json()["query"]["tokens"][key]
 
     def login(self) -> None:
         token = self._get_token("login")
-        resp = self.session.post(
+        resp = http_post(
+            self.session,
             self.api_url,
             data={
                 "action": "login",
@@ -34,13 +37,13 @@ class WikiPublisher:
             },
             timeout=60,
         )
-        resp.raise_for_status()
         if resp.json().get("login", {}).get("result") != "Success":
             raise RuntimeError(f"MediaWiki login failed: {resp.json()}")
 
     def edit(self, title: str, text: str, summary: str) -> None:
         token = self._get_token("csrf")
-        resp = self.session.post(
+        resp = http_post(
+            self.session,
             self.api_url,
             data={
                 "action": "edit",
@@ -53,7 +56,6 @@ class WikiPublisher:
             },
             timeout=60,
         )
-        resp.raise_for_status()
         if resp.json().get("edit", {}).get("result") != "Success":
             raise RuntimeError(f"MediaWiki edit failed for {title}: {resp.json()}")
 
@@ -63,20 +65,20 @@ class WikiPublisher:
         titles = [t for t in titles if t]
         for i in range(0, len(titles), 50):
             chunk = titles[i:i + 50]
-            resp = self.session.post(
+            http_post(
+                self.session,
                 self.api_url,
                 data={"action": "purge", "titles": "|".join(chunk), "format": "json"},
                 timeout=60,
             )
-            resp.raise_for_status()
 
     def page_exists(self, title: str) -> bool:
-        resp = self.session.get(
+        resp = http_get(
+            self.session,
             self.api_url,
             params={"action": "query", "titles": title, "prop": "info", "format": "json"},
             timeout=60,
         )
-        resp.raise_for_status()
         pages = resp.json()["query"]["pages"]
         # MediaWiki marks absent titles with a "missing" key (and a negative pageid).
         return not any("missing" in page for page in pages.values())

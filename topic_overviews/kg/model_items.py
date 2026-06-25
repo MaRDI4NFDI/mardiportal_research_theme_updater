@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import requests
 
+from ..http_utils import http_get
+
 P_LLM_MODEL_IDENTIFIER = "P1966"
 
 
@@ -18,7 +20,8 @@ def get_llm_model_identifier(
         raise ValueError("TOPIC_OVERVIEWS_MODEL_QID is required")
 
     session = session or requests.Session()
-    resp = session.get(
+    resp = http_get(
+        session,
         mediawiki_api_url,
         params={
             "action": "wbgetentities",
@@ -28,7 +31,6 @@ def get_llm_model_identifier(
         },
         timeout=60,
     )
-    resp.raise_for_status()
     entity = resp.json()["entities"][model_qid]
     claims = entity.get("claims", {}).get(property_id, [])
     for claim in claims:

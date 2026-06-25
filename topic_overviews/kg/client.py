@@ -10,6 +10,8 @@ import json
 import logging
 import requests
 
+from ..http_utils import http_get, http_post
+
 from wikibaseintegrator.datatypes import Item as WBItem
 from wikibaseintegrator.models import Qualifiers
 
@@ -45,12 +47,14 @@ class KGClient:
     def _get_session(self) -> requests.Session:
         if self._session is None:
             s = requests.Session()
-            lt = s.get(
+            lt = http_get(
+                s,
                 self._api_url,
                 params={"action": "query", "meta": "tokens", "type": "login", "format": "json"},
                 timeout=30,
             ).json()["query"]["tokens"]["logintoken"]
-            s.post(
+            http_post(
+                s,
                 self._api_url,
                 data={"action": "login", "lgname": self._bot_user, "lgpassword": self._bot_password,
                       "lgtoken": lt, "format": "json"},
@@ -60,7 +64,8 @@ class KGClient:
         return self._session
 
     def _csrf(self) -> str:
-        return self._get_session().get(
+        return http_get(
+            self._get_session(),
             self._api_url,
             params={"action": "query", "meta": "tokens", "format": "json"},
             timeout=30,
@@ -129,7 +134,8 @@ class KGClient:
         """
         # --- CirrusSearch (fast, near real-time) ---
         try:
-            resp = requests.get(
+            resp = http_get(
+                requests,
                 self._api_url,
                 params={
                     "action": "query",
@@ -141,7 +147,6 @@ class KGClient:
                 },
                 timeout=15,
             )
-            resp.raise_for_status()
             hits = resp.json().get("query", {}).get("search", [])
             if hits:
                 # title is "Item:Q12345" — strip the namespace prefix
@@ -159,13 +164,13 @@ SELECT ?item WHERE {{
 LIMIT 1
 """
         try:
-            resp = requests.get(
+            resp = http_get(
+                requests,
                 self._sparql_endpoint,
                 params={"query": query, "format": "json"},
                 headers={"Accept": "application/sparql-results+json"},
                 timeout=30,
             )
-            resp.raise_for_status()
             bindings = resp.json().get("results", {}).get("bindings", [])
             if bindings:
                 uri = bindings[0]["item"]["value"]
@@ -192,13 +197,13 @@ SELECT ?item WHERE {{
 LIMIT 1
 """
         try:
-            resp = requests.get(
+            resp = http_get(
+                requests,
                 self._sparql_endpoint,
                 params={"query": query, "format": "json"},
                 headers={"Accept": "application/sparql-results+json"},
                 timeout=30,
             )
-            resp.raise_for_status()
             bindings = resp.json().get("results", {}).get("bindings", [])
             if bindings:
                 uri = bindings[0]["item"]["value"]
@@ -232,13 +237,13 @@ LIMIT 1
 """
         qid = ""
         try:
-            resp = requests.get(
+            resp = http_get(
+                requests,
                 self._sparql_endpoint,
                 params={"query": query, "format": "json"},
                 headers={"Accept": "application/sparql-results+json"},
                 timeout=30,
             )
-            resp.raise_for_status()
             bindings = resp.json().get("results", {}).get("bindings", [])
             if bindings:
                 qid = bindings[0]["item"]["value"].rstrip("/").rsplit("/", 1)[-1]
@@ -353,17 +358,18 @@ LIMIT 1
         for prop, value in candidate_ids:
             if not value:
                 continue
-            r = s.get(
+            r = http_get(
+                s,
                 self._api_url,
                 params={"action": "wbgetclaims", "entity": paper_qid,
                         "property": prop, "format": "json"},
                 timeout=30,
             )
-            r.raise_for_status()
             if r.json().get("claims", {}).get(prop):
                 continue  # already set
             import json as _json
-            s.post(
+            http_post(
+                s,
                 self._api_url,
                 data={
                     "action": "wbcreateclaim", "entity": paper_qid,
@@ -372,7 +378,7 @@ LIMIT 1
                     "token": self._csrf(), "format": "json", "bot": "1",
                 },
                 timeout=30,
-            ).raise_for_status()
+            )
             log.info("write_missing_identifiers: %s added %s=%s", paper_qid, prop, value)
 
     def add_zbmath_enrichment(
@@ -397,15 +403,16 @@ LIMIT 1
         s = self._get_session()
 
         def _write_if_missing(prop: str, value: str, label: str) -> None:
-            r = s.get(
+            r = http_get(
+                s,
                 self._api_url,
                 params={"action": "wbgetclaims", "entity": paper_qid,
                         "property": prop, "format": "json"},
                 timeout=30,
             )
-            r.raise_for_status()
             if not r.json().get("claims", {}).get(prop):
-                s.post(
+                http_post(
+                    s,
                     self._api_url,
                     data={
                         "action": "wbcreateclaim", "entity": paper_qid,
@@ -414,7 +421,7 @@ LIMIT 1
                         "token": self._csrf(), "format": "json", "bot": "1",
                     },
                     timeout=30,
-                ).raise_for_status()
+                )
                 log.info("Enriched %s: added %s=%s", paper_qid, label, value)
 
         if zbmath_id:
@@ -422,13 +429,13 @@ LIMIT 1
         if zbmath_de_number:
             _write_if_missing(M.P_ZBMATH_DE_NUMBER, zbmath_de_number, "P1451")
         for code in msc_codes or []:
-            r = s.get(
+            r = http_get(
+                s,
                 self._api_url,
                 params={"action": "wbgetclaims", "entity": paper_qid,
                         "property": M.P_MSC_ID, "format": "json"},
                 timeout=30,
             )
-            r.raise_for_status()
             existing_msc = {
                 c["mainsnak"]["datavalue"]["value"]
                 for c in r.json().get("claims", {}).get(M.P_MSC_ID, [])
@@ -436,7 +443,8 @@ LIMIT 1
             }
             for code in msc_codes or []:
                 if code not in existing_msc:
-                    s.post(
+                    http_post(
+                        s,
                         self._api_url,
                         data={
                             "action": "wbcreateclaim", "entity": paper_qid,
@@ -445,19 +453,19 @@ LIMIT 1
                             "token": self._csrf(), "format": "json", "bot": "1",
                         },
                         timeout=30,
-                    ).raise_for_status()
+                    )
                     log.info("Enriched %s: added P226=%s", paper_qid, code)
             break  # only one GET needed for existing MSC check
 
         # P1450 zbMATH keywords
         if zbmath_keywords:
-            r = s.get(
+            r = http_get(
+                s,
                 self._api_url,
                 params={"action": "wbgetclaims", "entity": paper_qid,
                         "property": M.P_ZBMATH_KEYWORDS, "format": "json"},
                 timeout=30,
             )
-            r.raise_for_status()
             existing_kw = {
                 c["mainsnak"]["datavalue"]["value"]
                 for c in r.json().get("claims", {}).get(M.P_ZBMATH_KEYWORDS, [])
@@ -465,7 +473,8 @@ LIMIT 1
             }
             for kw in zbmath_keywords:
                 if kw not in existing_kw:
-                    s.post(
+                    http_post(
+                        s,
                         self._api_url,
                         data={
                             "action": "wbcreateclaim", "entity": paper_qid,
@@ -474,22 +483,23 @@ LIMIT 1
                             "token": self._csrf(), "format": "json", "bot": "1",
                         },
                         timeout=30,
-                    ).raise_for_status()
+                    )
                     log.info("Enriched %s: added P1450=%r", paper_qid, kw)
 
         # P200 published in (journal item)
         if journal_title:
-            r = s.get(
+            r = http_get(
+                s,
                 self._api_url,
                 params={"action": "wbgetclaims", "entity": paper_qid,
                         "property": M.P_PUBLISHED_IN, "format": "json"},
                 timeout=30,
             )
-            r.raise_for_status()
             if not r.json().get("claims", {}).get(M.P_PUBLISHED_IN):
                 journal_qid = self._resolve_journal_qid(journal_title)
                 if journal_qid:
-                    s.post(
+                    http_post(
+                        s,
                         self._api_url,
                         data={
                             "action": "wbcreateclaim", "entity": paper_qid,
@@ -498,18 +508,18 @@ LIMIT 1
                             "token": self._csrf(), "format": "json", "bot": "1",
                         },
                         timeout=30,
-                    ).raise_for_status()
+                    )
                     log.info("Enriched %s: added P200=%s (%r)", paper_qid, journal_qid, journal_title)
 
         # Fetch existing P16 claims once to avoid adding duplicate authors.
         existing_p16 = set()
-        r_p16 = s.get(
+        r_p16 = http_get(
+            s,
             self._api_url,
             params={"action": "wbgetclaims", "entity": paper_qid,
                     "property": M.P_AUTHOR, "format": "json"},
             timeout=30,
         )
-        r_p16.raise_for_status()
         for c in r_p16.json().get("claims", {}).get(M.P_AUTHOR, []):
             qid = (c.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id")
             if qid:
@@ -527,7 +537,8 @@ LIMIT 1
                 log.debug("P16=%s already set on %s (author %r), skipping", author_qid, paper_qid, name)
                 continue
             existing_p16.add(author_qid)
-            s.post(
+            http_post(
+                s,
                 self._api_url,
                 data={
                     "action": "wbcreateclaim", "entity": paper_qid,
@@ -536,7 +547,7 @@ LIMIT 1
                     "token": self._csrf(), "format": "json", "bot": "1",
                 },
                 timeout=30,
-            ).raise_for_status()
+            )
             log.info(
                 "Enriched %s: added P16=%s via P676=%s (author %r)",
                 paper_qid, author_qid, zbmath_author_id, name,
@@ -557,13 +568,13 @@ LIMIT 1
         if not cited_qids:
             return
         s = self._get_session()
-        r = s.get(
+        r = http_get(
+            s,
             self._api_url,
             params={"action": "wbgetclaims", "entity": paper_qid,
                     "property": M.P_CITES_WORK, "format": "json"},
             timeout=30,
         )
-        r.raise_for_status()
         existing: set[str] = set()
         for c in r.json().get("claims", {}).get(M.P_CITES_WORK, []):
             qid = (c.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id")
@@ -582,7 +593,8 @@ LIMIT 1
             if cited_qid in existing:
                 continue
             existing.add(cited_qid)
-            resp = s.post(
+            resp = http_post(
+                s,
                 self._api_url,
                 data={
                     "action": "wbcreateclaim", "entity": paper_qid,
@@ -592,11 +604,11 @@ LIMIT 1
                 },
                 timeout=30,
             )
-            resp.raise_for_status()
             if reference_snaks:
                 claim_guid = (resp.json().get("claim") or {}).get("id")
                 if claim_guid:
-                    s.post(
+                    http_post(
+                        s,
                         self._api_url,
                         data={
                             "action": "wbsetreference", "statement": claim_guid,
@@ -604,7 +616,7 @@ LIMIT 1
                             "token": self._csrf(), "format": "json", "bot": "1",
                         },
                         timeout=30,
-                    ).raise_for_status()
+                    )
             added += 1
         if added:
             log.info("link_citations: %s → %d new P223 claim(s)%s", paper_qid, added,
@@ -633,12 +645,12 @@ LIMIT 1
         if max_papers <= 0 or not self._api_url:
             return 0
         s = self._get_session()
-        resp = s.get(
+        resp = http_get(
+            s,
             self._api_url,
             params={"action": "wbgetentities", "ids": topic_qid, "props": "claims", "format": "json"},
             timeout=30,
         )
-        resp.raise_for_status()
         p265 = resp.json()["entities"][topic_qid].get("claims", {}).get(M.P_HAS_PART, [])
         if len(p265) <= max_papers:
             return 0
@@ -655,7 +667,8 @@ LIMIT 1
         dates: dict[str, str] = {}
         for i in range(0, len(paper_qids), 50):
             batch = paper_qids[i : i + 50]
-            r = s.get(
+            r = http_get(
+                s,
                 self._api_url,
                 params={"action": "wbgetentities", "ids": "|".join(batch), "props": "claims", "format": "json"},
                 timeout=60,
@@ -667,7 +680,8 @@ LIMIT 1
         # Oldest first
         to_remove = sorted(paper_qids, key=lambda q: dates.get(q, ""))[: len(paper_qids) - max_papers]
         guids = [paper_guids[q] for q in to_remove]
-        r = s.post(
+        r = http_post(
+            s,
             self._api_url,
             data={"action": "wbremoveclaims", "claim": "|".join(guids),
                   "token": self._csrf(), "format": "json", "bot": "1"},

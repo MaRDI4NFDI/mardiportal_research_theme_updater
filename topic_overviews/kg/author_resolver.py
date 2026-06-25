@@ -14,7 +14,10 @@ Results are cached per name for the lifetime of the resolver instance.
 from __future__ import annotations
 
 import logging
+
 import requests
+
+from ..http_utils import http_get
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +71,8 @@ class AuthorResolver:
 
     def _kg_search(self, name: str) -> list[str]:
         try:
-            r = self._session.get(
+            r = http_get(
+                self._session,
                 self.api_url,
                 params={
                     "action": "wbsearchentities",
@@ -80,7 +84,6 @@ class AuthorResolver:
                 },
                 timeout=30,
             )
-            r.raise_for_status()
             return [h["id"] for h in r.json().get("search", [])]
         except Exception as exc:
             log.warning("KG search failed for %r: %s", name, exc)
@@ -88,13 +91,13 @@ class AuthorResolver:
 
     def _openalex_orcid(self, name: str) -> str | None:
         try:
-            r = requests.get(
+            r = http_get(
+                requests,
                 "https://api.openalex.org/authors",
                 params={"search": name, "per-page": 5},
                 headers={"User-Agent": _OPENALEX_USER_AGENT},
                 timeout=15,
             )
-            r.raise_for_status()
             results = r.json().get("results", [])
             best = max(
                 (a for a in results if a.get("orcid")),
@@ -109,7 +112,8 @@ class AuthorResolver:
 
     def _kg_orcid(self, qid: str) -> str | None:
         try:
-            r = self._session.get(
+            r = http_get(
+                self._session,
                 self.api_url,
                 params={
                     "action": "wbgetentities",
@@ -119,7 +123,6 @@ class AuthorResolver:
                 },
                 timeout=30,
             )
-            r.raise_for_status()
             claims = r.json()["entities"][qid].get("claims", {})
             for claim in claims.get(_P_ORCID, []):
                 dv = claim.get("mainsnak", {}).get("datavalue", {})
