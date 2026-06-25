@@ -6,6 +6,7 @@ from topic_overviews.kg.model_items import get_llm_model_identifier
 class FakeResp:
     def __init__(self, payload):
         self._payload = payload
+        self.text = "non-empty"
 
     def raise_for_status(self):
         pass
