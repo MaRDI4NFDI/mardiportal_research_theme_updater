@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -56,23 +57,28 @@ class OpenAICompatibleLLMClient:
     def complete(self, prompt: str, *, model: str, max_tokens: int) -> str:
         log.info("LLM request → openai-compat/%s (prompt %d chars)", model, len(prompt))
         for attempt in range(2):
-            resp = requests.post(
-                f"{self.base_url.rstrip('/')}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": max_tokens,
-                    "temperature": 0,
-                    "stream": False,
-                    "options": {"num_ctx": 32768},
-                },
-                timeout=300,
-            )
-            resp.raise_for_status()
+            try:
+                resp = requests.post(
+                    f"{self.base_url.rstrip('/')}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": max_tokens,
+                        "temperature": 0,
+                        "stream": False,
+                        "options": {"num_ctx": 32768},
+                    },
+                    timeout=300,
+                )
+                resp.raise_for_status()
+            except requests.exceptions.RequestException as exc:
+                raise ValueError(
+                    f"LLM server unavailable at {self.base_url}: {exc}"
+                ) from exc
             data = resp.json()
             choices = data.get("choices") or []
             if not choices:
@@ -97,6 +103,36 @@ class OpenAICompatibleLLMClient:
                 return content
             log.warning("Empty response on attempt %d, retrying", attempt + 1)
         return ""
+
+
+def assert_openai_compatible_server_available(
+    base_url: str,
+    *,
+    retries: int = 2,
+    delay: float = 3.0,
+) -> None:
+    """Raise ValueError if the OpenAI-compatible server is not reachable.
+
+    Tries GET {base_url}/tags (the Ollama model-list endpoint) up to
+    1 + retries times, pausing delay seconds between attempts.
+    """
+    url = f"{base_url.rstrip('/')}/tags"
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 2):
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            log.info("LLM server reachable at %s", base_url)
+            return
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+            if attempt <= retries:
+                log.warning(
+                    "LLM server not reachable (attempt %d/%d): %s — retrying in %.0fs",
+                    attempt, retries + 1, exc, delay,
+                )
+                time.sleep(delay)
+    raise ValueError(f"LLM server unavailable at {base_url}: {last_exc}") from last_exc
 
 
 def make_llm_client(config) -> LLMClient:

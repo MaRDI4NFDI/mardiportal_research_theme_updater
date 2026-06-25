@@ -18,6 +18,7 @@ from topic_overviews.state import State
 from topic_overviews.kg.topics import load_registered_topics
 from topic_overviews.kg.client import make_kg_client
 from topic_overviews.kg.model_items import get_llm_model_identifier
+from topic_overviews.llm.client import assert_openai_compatible_server_available
 from topic_overviews.wiki.publisher import make_publisher
 from topic_overviews import pipeline
 
@@ -79,6 +80,7 @@ def topic_overviews(
 
     model = ""
     if not themes_only:
+        assert_openai_compatible_server_available(_OPENAI_BASE_URL)
         model = get_llm_model_identifier(_MEDIAWIKI_API_URL, _MODEL_QID)
         logger.info("LLM model identifier: %s", model)
 
