@@ -15,8 +15,10 @@ from .kg.topics import Topic
 from .kg.citation_linker import (
     fetch_zbmath_references,
     fetch_openalex_referenced_works,
+    fetch_crossref_references,
     resolve_qids_by_zbmath_doc_ids,
     resolve_qids_by_openalex_ids,
+    resolve_qids_by_dois,
     fetch_s2_references,
     resolve_s2_references,
 )
@@ -241,23 +243,35 @@ def harvest_step(
         zbmath_id = getattr(record, "zbmath_id", "") or (
             zb_record.zbmath_id if zb_record else ""
         )
+        doi = getattr(record, "doi", "") or ""
+
+        cited_qids: list[str] = []
+
+        # 1. zbMATH (highest quality — includes MSC-resolved references)
         if zbmath_id:
             doc_ids = fetch_zbmath_references(zbmath_id)
             cited_qids = resolve_qids_by_zbmath_doc_ids(doc_ids, sparql_endpoint)
-        elif getattr(record, "openalex_id", ""):
+
+        # 2. Crossref (publisher DOIs only — more complete than OpenAlex for journal papers)
+        if not cited_qids and doi:
+            ref_dois = fetch_crossref_references(doi)
+            cited_qids = resolve_qids_by_dois(ref_dois, sparql_endpoint)
+
+        # 3. OpenAlex (covers arXiv preprints and papers not in Crossref)
+        if not cited_qids and getattr(record, "openalex_id", ""):
             oa_work_ids = fetch_openalex_referenced_works(
                 record.openalex_id, email=openalex_email
             )
             cited_qids = resolve_qids_by_openalex_ids(oa_work_ids, sparql_endpoint)
-        else:
-            cited_qids = []
+
         if cited_qids:
             kg.link_citations(paper_qid, cited_qids)
             return
-        # Third pass: Semantic Scholar fallback
+
+        # 4. Semantic Scholar fallback
         s2_refs = fetch_s2_references(
             arxiv_id=getattr(record, "arxiv_id", "") or "",
-            doi=getattr(record, "doi", "") or "",
+            doi=doi,
             api_key=s2_api_key,
         )
         s2_qids = resolve_s2_references(s2_refs, sparql_endpoint, mediawiki_api_url)

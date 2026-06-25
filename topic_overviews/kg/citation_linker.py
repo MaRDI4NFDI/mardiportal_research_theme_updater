@@ -18,7 +18,12 @@ from .sparql import run_sparql
 ZBMATH_API_BASE = "https://api.zbmath.org/v1"
 OPENALEX_API_URL = "https://api.openalex.org/works"
 S2_API_BASE = "https://api.semanticscholar.org/graph/v1"
+CROSSREF_API_BASE = "https://api.crossref.org/works"
+CROSSREF_USER_AGENT = "mardi-topic-overviews/1.0 (mailto:tofconrad@googlemail.com)"
 MARDI_API_URL = "https://portal.mardi4nfdi.de/w/api.php"
+
+# DOI prefixes that are not registered with Crossref
+_NON_CROSSREF_DOI_PREFIXES = ("10.48550/", "10.5281/")
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +105,61 @@ def fetch_openalex_referenced_works_by_arxiv(arxiv_id: str, *, session=None, ema
     except Exception as exc:
         log.warning("OpenAlex referenced_works (arXiv:%s) failed: %s", arxiv_id, exc)
         return []
+
+
+def fetch_crossref_references(doi: str, *, session=None) -> list[str]:
+    """Return DOIs of works cited by this paper, fetched from the Crossref REST API.
+
+    Only meaningful for papers with a real publisher DOI (not arXiv or Zenodo).
+    Returns an empty list on 404 or error.
+    """
+    if not doi or doi.lower().startswith(_NON_CROSSREF_DOI_PREFIXES):
+        return []
+    sess = session or requests.Session()
+    try:
+        resp = sess.get(
+            f"{CROSSREF_API_BASE}/{doi}",
+            headers={"User-Agent": CROSSREF_USER_AGENT},
+            timeout=30,
+        )
+        if resp.status_code == 404:
+            return []
+        resp.raise_for_status()
+        refs = resp.json().get("message", {}).get("reference", [])
+        dois = [r["DOI"] for r in refs if r.get("DOI")]
+        log.debug("Crossref %s: %d reference(s) with DOI (of %d total)", doi, len(dois), len(refs))
+        return dois
+    except Exception as exc:
+        log.warning("Crossref references fetch for %s failed: %s", doi, exc)
+        return []
+
+
+def resolve_qids_by_dois(
+    dois: list[str],
+    sparql_endpoint: str,
+    session=None,
+) -> list[str]:
+    """Return KG QIDs for papers identified by DOI (P27).
+
+    Tries both the original case and lowercase to handle DOI case variation
+    between sources.
+    """
+    if not dois:
+        return []
+    # Build a case-insensitive map: lowercase DOI → original DOI from Crossref
+    lower_map = {d.lower(): d for d in dois}
+    # Try original case first
+    mapping = _batch_sparql_lookup(M.P_DOI, dois, sparql_endpoint, session)
+    # Also try lowercase for any unmatched DOIs
+    unmatched_lower = [d.lower() for d in dois if d not in mapping and d.lower() != d]
+    if unmatched_lower:
+        lower_mapping = _batch_sparql_lookup(M.P_DOI, unmatched_lower, sparql_endpoint, session)
+        for val, qid in lower_mapping.items():
+            if qid not in mapping.values():
+                mapping[lower_map.get(val, val)] = qid
+    found = len(mapping)
+    log.info("Citation resolve (Crossref): %d/%d DOIs matched in KG", found, len(dois))
+    return list(mapping.values())
 
 
 def _batch_sparql_lookup(prop: str, values: list[str], sparql_endpoint: str, session=None) -> dict[str, str]:
