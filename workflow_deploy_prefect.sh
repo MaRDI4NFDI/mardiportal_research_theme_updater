@@ -13,4 +13,4 @@ PREFECT_API_AUTH_STRING=$(kubectl get secret prefect-server-auth -n production \
 export PREFECT_API_URL
 export PREFECT_API_AUTH_STRING
 
-python workflow_deploy_prefect.py
+python3.10 workflow_deploy_prefect.py

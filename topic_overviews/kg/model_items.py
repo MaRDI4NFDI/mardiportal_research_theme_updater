@@ -31,6 +31,11 @@ def get_llm_model_identifier(
         },
         timeout=60,
     )
+    if not resp.text:
+        raise ValueError(
+            f"MediaWiki API returned an empty response for {model_qid} "
+            f"(status {resp.status_code}, url: {resp.url})"
+        )
     entity = resp.json()["entities"][model_qid]
     claims = entity.get("claims", {}).get(property_id, [])
     for claim in claims:
