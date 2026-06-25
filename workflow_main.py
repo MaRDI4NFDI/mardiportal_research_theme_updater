@@ -46,6 +46,10 @@ def topic_overviews(
     bot_user = Secret.load("topic-overviews-bot-user").get()
     bot_password = Secret.load("topic-overviews-bot-password").get()
     openai_api_key = Secret.load("topic-overviews-openai-api-key").get()
+    try:
+        s2_api_key = Secret.load("topic-overviews-s2-api-key").get()
+    except Exception:
+        s2_api_key = ""
 
     config = Config(
         arxiv_query="",
@@ -69,6 +73,7 @@ def topic_overviews(
         mediawiki_bot_password=bot_password,
         wikibase_url=_WIKIBASE_URL,
         sparql_endpoint_url=_SPARQL_ENDPOINT_URL,
+        s2_api_key=s2_api_key,
         dry_run=dry_run,
     )
 

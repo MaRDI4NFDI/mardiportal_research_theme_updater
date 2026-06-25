@@ -24,4 +24,5 @@ if __name__ == "__main__":
     create("topic-overviews-bot-user",        "MediaWiki bot username (e.g. DoipBot)", secret=False)
     create("topic-overviews-bot-password",    "MediaWiki bot password")
     create("topic-overviews-openai-api-key",  "ZIB Ollama API key (OLLAMA_API_KEY)")
+    create("topic-overviews-s2-api-key",      "Semantic Scholar API key (S2_API_KEY)")
     print("\nDone.")
