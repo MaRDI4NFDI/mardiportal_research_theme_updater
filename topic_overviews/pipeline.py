@@ -135,14 +135,27 @@ def _process_record(
             )
             return False
 
-    log.info("Classifying %s paper %s (%s) with model %s", source_label, rid, record.title, model)
-    matched = classify(
-        record,
-        covering,
-        model=model,
-        api_key=config.anthropic_api_key,
-        llm=llm,
-    )
+    keyword_matched = [
+        t for t in covering
+        if t.matches_keywords(record.title, record.abstract)
+    ]
+    if keyword_matched:
+        for t in keyword_matched:
+            kw = t.matches_keywords(record.title, record.abstract)
+            log.info(
+                "Auto-classifying %s paper %s (%s) to %s (%s) via keyword %r",
+                source_label, rid, record.title, t.label, t.qid, kw,
+            )
+        matched = [t.qid for t in keyword_matched]
+    else:
+        log.info("Classifying %s paper %s (%s) with model %s", source_label, rid, record.title, model)
+        matched = classify(
+            record,
+            covering,
+            model=model,
+            api_key=config.anthropic_api_key,
+            llm=llm,
+        )
     matched_labels = [f"{topic_label.get(q, q)} ({q})" for q in matched] if matched else []
     log.info(
         "Classified %s paper %s (%s) into: %s",

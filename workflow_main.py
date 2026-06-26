@@ -96,6 +96,7 @@ def topic_overviews(
         openalex_query_property=config.openalex_query_property,
         zbmath_query_property=config.zbmath_query_property,
         since_days_property=config.since_days_property,
+        auto_classify_keywords_property=config.auto_classify_keywords_property,
     )
     logger.info("Loaded %d research themes", len(topics))
     for t in topics:
