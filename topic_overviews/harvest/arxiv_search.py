@@ -91,10 +91,11 @@ def search_records(
                 },
                 timeout=60,
             )
-            if resp.status_code == 429:
+            if resp.status_code in (429, 503, 502, 504):
                 wait = 60 * (2 ** attempt)
                 log.warning(
-                    "arXiv returned 429 for query=%r (attempt %d/5); waiting %ds",
+                    "arXiv returned %d for query=%r (attempt %d/5); waiting %ds",
+                    resp.status_code,
                     query,
                     attempt + 1,
                     wait,
