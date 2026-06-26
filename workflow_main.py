@@ -100,6 +100,7 @@ def topic_overviews(
     logger.info("Loaded %d research themes", len(topics))
     for t in topics:
         logger.info("  %s: %s", t.qid, t.label)
+        logger.info("    Description: %s", t.description or "(none)")
 
     kg = None if dry_run else make_kg_client(config)
     publisher = None if dry_run else make_publisher(config)
