@@ -9,6 +9,7 @@ Local dev: use run_locally.sh + .env instead.
 from __future__ import annotations
 
 import logging
+import subprocess
 
 from prefect import flow, get_run_logger
 from prefect.blocks.system import Secret
@@ -43,6 +44,10 @@ def topic_overviews(
     themes_only: bool = False,
 ) -> None:
     logger = get_run_logger()
+
+    result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+    sha = result.stdout.strip() if result.returncode == 0 else "unknown"
+    logger.info("Running commit: %s", sha)
 
     bot_user = Secret.load("topic-overviews-bot-user").get()
     bot_password = Secret.load("topic-overviews-bot-password").get()
