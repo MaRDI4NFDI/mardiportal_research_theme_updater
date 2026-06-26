@@ -46,7 +46,8 @@ def main() -> None:
     )
     log.info("Loaded %d registered research themes", len(topics))
     for t in topics:
-        log.info("  Theme %s: %s", t.qid, t.label)
+        log.info("  %s: %s", t.qid, t.label)
+        log.info("    Description: %s", t.description or "(none)")
 
     kg = None if config.dry_run else make_kg_client(config)
     publisher = None if config.dry_run else make_publisher(config)
