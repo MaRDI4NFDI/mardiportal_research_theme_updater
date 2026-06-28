@@ -16,7 +16,7 @@ from prefect.blocks.system import Secret
 
 from topic_overviews.config import Config
 from topic_overviews.state import State
-from topic_overviews.kg.topics import load_registered_topics
+from topic_overviews.kg.topics import count_all_topics, load_registered_topics
 from topic_overviews.kg.client import make_kg_client
 from topic_overviews.kg.model_items import get_llm_model_identifier
 from topic_overviews.llm.client import assert_openai_compatible_server_available
@@ -98,8 +98,17 @@ def topic_overviews(
         zbmath_query_property=config.zbmath_query_property,
         since_days_property=config.since_days_property,
         auto_classify_keywords_property=config.auto_classify_keywords_property,
+        maintainer_qid=config.maintainer_qid,
     )
-    logger.info("Loaded %d research themes", len(topics))
+    if config.maintainer_qid:
+        total = count_all_topics(_SPARQL_ENDPOINT_URL, _RESEARCH_THEME_QID)
+        ignored = total - len(topics)
+        logger.info(
+            "Loaded %d research theme(s) for automated updates (%d ignored — P19 not set to %s)",
+            len(topics), ignored, config.maintainer_qid,
+        )
+    else:
+        logger.info("Loaded %d research theme(s)", len(topics))
     for t in topics:
         logger.info("  %s: %s", t.qid, t.label)
         logger.info("    Description: %s", t.description or "(none)")

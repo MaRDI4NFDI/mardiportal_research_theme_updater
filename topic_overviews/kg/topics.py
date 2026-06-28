@@ -32,17 +32,34 @@ class Topic:
         return None
 
 
+_COUNT_QUERY = """SELECT (COUNT(?topic) AS ?count) WHERE {{
+  ?topic wdt:{p_inst} wd:{cls} .
+}}"""
+
 _QUERY = """SELECT ?topic ?label ?desc {query_select} WHERE {{
   ?topic wdt:{p_inst} wd:{cls} .
-  ?topic rdfs:label ?label . FILTER(LANG(?label) = "en")
+  {maintainer_filter}?topic rdfs:label ?label . FILTER(LANG(?label) = "en")
   OPTIONAL {{ ?topic schema:description ?desc . FILTER(LANG(?desc) = "en") }}
   {query_optionals}
 }}"""
 
 _KEYWORDS_QUERY = """SELECT ?topic ?keyword WHERE {{
   ?topic wdt:{p_inst} wd:{cls} .
-  ?topic wdt:{p_kw} ?keyword .
+  {maintainer_filter}?topic wdt:{p_kw} ?keyword .
 }}"""
+
+
+def count_all_topics(
+    sparql_endpoint: str,
+    research_theme_qid: str,
+    run=run_sparql,
+) -> int:
+    """Return total number of research theme items regardless of maintainer filter."""
+    rows = run(
+        sparql_endpoint,
+        _COUNT_QUERY.format(p_inst=P_INSTANCE_OF, cls=research_theme_qid),
+    )
+    return int(rows[0]["count"]) if rows else 0
 
 
 def load_registered_topics(
@@ -54,8 +71,12 @@ def load_registered_topics(
     zbmath_query_property: str = "",
     since_days_property: str = "",
     auto_classify_keywords_property: str = "",
+    maintainer_qid: str = "",
     run=run_sparql,
 ) -> list[Topic]:
+    maintainer_filter = (
+        f"?topic wdt:P19 wd:{maintainer_qid} .\n  " if maintainer_qid else ""
+    )
     select_parts = []
     optional_parts = []
     if arxiv_query_property:
@@ -82,6 +103,7 @@ def load_registered_topics(
     query = _QUERY.format(
         p_inst=P_INSTANCE_OF,
         cls=research_theme_qid,
+        maintainer_filter=maintainer_filter,
         query_select=" ".join(select_parts),
         query_optionals="\n  ".join(optional_parts),
     )
@@ -94,6 +116,7 @@ def load_registered_topics(
             _KEYWORDS_QUERY.format(
                 p_inst=P_INSTANCE_OF,
                 cls=research_theme_qid,
+                maintainer_filter=maintainer_filter,
                 p_kw=auto_classify_keywords_property,
             ),
         )

@@ -156,3 +156,27 @@ def test_load_topics_omits_since_days_when_property_not_configured():
     )
     assert "sinceDays" not in captured[0]
     assert "P1968" not in captured[0]
+
+
+def test_load_topics_filters_by_maintainer_qid():
+    rows = [{"topic": "https://portal.mardi4nfdi.de/entity/Q7266543", "label": "ABM", "desc": ""}]
+    captured = []
+    load_registered_topics(
+        "http://sparql",
+        "Q7266523",
+        maintainer_qid="Q7270033",
+        run=lambda endpoint, query: captured.append(query) or rows,
+    )
+    assert "wdt:P19 wd:Q7270033" in captured[0]
+
+
+def test_load_topics_no_maintainer_filter_when_qid_empty():
+    rows = [{"topic": "https://portal.mardi4nfdi.de/entity/Q7266543", "label": "ABM", "desc": ""}]
+    captured = []
+    load_registered_topics(
+        "http://sparql",
+        "Q7266523",
+        maintainer_qid="",
+        run=lambda endpoint, query: captured.append(query) or rows,
+    )
+    assert "wdt:P19" not in captured[0]

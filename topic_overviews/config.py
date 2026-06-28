@@ -16,6 +16,7 @@ class Config:
     zbmath_query_property: str
     since_days_property: str
     auto_classify_keywords_property: str
+    maintainer_qid: str
     since_days: int
     llm_provider: str
     openai_base_url: str
@@ -48,6 +49,7 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         zbmath_query_property=env.get("TOPIC_OVERVIEWS_ZBMATH_QUERY_PROPERTY", "P1979"),
         since_days_property=env.get("TOPIC_OVERVIEWS_SINCE_DAYS_PROPERTY", ""),
         auto_classify_keywords_property=env.get("TOPIC_OVERVIEWS_AUTO_CLASSIFY_KEYWORDS_PROPERTY", "P1990"),
+        maintainer_qid=env.get("TOPIC_OVERVIEWS_MAINTAINER_QID", "Q7270033"),
         since_days=int(env.get("TOPIC_OVERVIEWS_SINCE_DAYS", "10")),
         llm_provider=env.get("TOPIC_OVERVIEWS_LLM_PROVIDER", "anthropic"),
         openai_base_url=env.get("TOPIC_OVERVIEWS_OPENAI_BASE_URL", "https://ollama.zib.de/api"),
