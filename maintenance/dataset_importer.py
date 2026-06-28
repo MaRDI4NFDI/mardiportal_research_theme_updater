@@ -116,6 +116,66 @@ def extract_kaggle_id(links: list[str]) -> str | None:
     return None
 
 
+def extract_zenodo_id(links: list[str], unique_identifier: str | None = None) -> str | None:
+    """Return the first Zenodo numeric record ID found in links or DOI."""
+    for url in links:
+        m = re.search(r"zenodo\.org/(?:records?|deposit)/(\d+)", url)
+        if m:
+            return m.group(1)
+    if unique_identifier:
+        m = re.search(r"10\.5281/zenodo\.(\d+)", unique_identifier)
+        if m:
+            return m.group(1)
+    return None
+
+
+def fetch_hf_description(hf_id: str) -> str | None:
+    """Fetch and clean the full description from a HuggingFace dataset README.
+
+    Returns a single-line string capped at 1500 chars, or None if unavailable.
+    """
+    try:
+        import requests as _requests
+        url = f"https://huggingface.co/datasets/{hf_id}/resolve/main/README.md"
+        r = _requests.get(url, allow_redirects=True, timeout=15,
+                          headers={"User-Agent": "MaRDI-dataset-import/1.0"})
+        if r.status_code != 200:
+            return None
+        text = r.text
+    except Exception:
+        return None
+
+    # Strip YAML frontmatter (allow optional leading whitespace/BOM before ---)
+    text = re.sub(r"^\s*---.*?---\s*", "", text, flags=re.DOTALL)
+    # Strip fenced code blocks entirely (complete and unclosed)
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    text = re.sub(r"```.*", "", text, flags=re.DOTALL)  # unclosed fence → strip to end
+    text = re.sub(r"`[^`]+`", "", text)
+    # Strip HTML tags (e.g. <br>, <table>)
+    text = re.sub(r"<[^>]+>", " ", text)
+    # Strip markdown table rows (lines containing |) and separator lines (---|)
+    text = re.sub(r"^[ \t]*\|.*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^[ \t]*[-:]+[ \t]*$", "", text, flags=re.MULTILINE)
+    # Resolve markdown links [text](url) → text
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # Strip heading markers
+    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
+    # Strip emphasis markers (bold/italic only, preserve underscores in identifiers)
+    text = re.sub(r"\*+", "", text)
+    text = re.sub(r"_{2}([^_]+)_{2}", r"\1", text)
+    text = re.sub(r"_([^_\s][^_]*)_", r"\1", text)
+    # Collapse all vertical whitespace to single space
+    text = re.sub(r"[\r\n\t\v\f]+", " ", text)
+    text = re.sub(r" {2,}", " ", text)
+    text = html.unescape(text).strip()
+
+    if len(text) > 1500:
+        cut = text.rfind(". ", 0, 1500)
+        text = text[:cut + 1] if cut > 0 else text[:1500]
+
+    return text if len(text) > 50 else None
+
+
 def map_item(d: dict) -> dict:
     claims: dict = {
         "P31": "Q56885",
@@ -139,6 +199,9 @@ def map_item(d: dict) -> dict:
         kaggle_id = extract_kaggle_id(links)
         if kaggle_id:
             claims["P1992"] = kaggle_id
+        zenodo_id = extract_zenodo_id(links, d.get("unique_identifier"))
+        if zenodo_id:
+            claims["P227"] = zenodo_id
 
     tldr = d.get("tldr", "").strip()
     if tldr:
@@ -197,6 +260,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
     seen_ids: set[str] = set()
     items = []
     filtered_count = 0
+    enrich_hf = args.enrich_hf
+    enriched_count = 0
+
     for d in data.get("datasets", []):
         sid = d.get("dataset_id")
         if sid and sid in seen_ids:
@@ -207,6 +273,19 @@ def cmd_convert(args: argparse.Namespace) -> int:
         if _is_non_dataset(title):
             filtered_count += 1
             continue
+
+        if enrich_hf:
+            links = [l for l in (d.get("links") or []) if l]
+            hf_id = extract_hf_id(links)
+            if hf_id:
+                desc = d.get("description", "")
+                if not desc or desc.rstrip().endswith("…") or desc.rstrip().endswith("..."):
+                    full = fetch_hf_description(hf_id)
+                    if full:
+                        d = dict(d, description=full)
+                        enriched_count += 1
+            time.sleep(0.3)
+
         items.append(map_item(d))
 
     output = {
@@ -223,6 +302,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
     print(f"Written {total} items to {output_path}")
     if filtered_count:
         print(f"  filtered (non-dataset) : {filtered_count}")
+    if enrich_hf:
+        print(f"  HF description enriched: {enriched_count}")
     print(f"  with description   : {sum(1 for i in items if i['claims'].get('P1459'))}")
     print(f"  with DOI           : {sum(1 for i in items if i['claims'].get('P27'))}")
     print(f"  with license (QID) : {has_license}")
@@ -369,6 +450,53 @@ def _add_part_to_theme(session, api_url: str, csrf_token: str, theme_qid: str, d
         raise RuntimeError(f"wbcreateclaim P265 error: {result['error']}")
 
 
+def _set_theme_last_update(session, api_url: str, csrf_token: str, theme_qid: str) -> None:
+    """Set P170 (last update) on the theme item to today's date.
+
+    Updates the existing claim if one is present; creates a new one otherwise.
+    """
+    today = datetime.utcnow().strftime("+%Y-%m-%dT00:00:00Z")
+    time_value = json.dumps({
+        "time": today,
+        "timezone": 0,
+        "before": 0,
+        "after": 0,
+        "precision": 11,
+        "calendarmodel": "http://www.wikidata.org/entity/Q1985727",
+    })
+
+    r = session.get(api_url, params={
+        "action": "wbgetentities", "ids": theme_qid, "props": "claims", "format": "json",
+    })
+    r.raise_for_status()
+    existing = r.json()["entities"][theme_qid].get("claims", {}).get("P170", [])
+
+    if existing:
+        guid = existing[0]["id"]
+        r = session.post(api_url, data={
+            "action": "wbsetclaimvalue",
+            "claim": guid,
+            "snaktype": "value",
+            "value": time_value,
+            "token": csrf_token,
+            "format": "json",
+        })
+    else:
+        r = session.post(api_url, data={
+            "action": "wbcreateclaim",
+            "entity": theme_qid,
+            "snaktype": "value",
+            "property": "P170",
+            "value": time_value,
+            "token": csrf_token,
+            "format": "json",
+        })
+    r.raise_for_status()
+    result = r.json()
+    if "error" in result:
+        raise RuntimeError(f"P170 update error: {result['error']}")
+
+
 def _find_existing_item(session, api_url: str, label: str) -> str | None:
     """Search the KG for an item whose English label exactly matches `label`.
 
@@ -507,6 +635,14 @@ def cmd_import_to_mardi(args: argparse.Namespace) -> int:
     print(f"\nDone: {imported} imported, {skipped} skipped (exists or already imported), {failed} failed.")
     if imported:
         print(f"Sidecar written to {sidecar_path}")
+
+    if imported and theme_qid:
+        try:
+            _set_theme_last_update(session, api_url, csrf_token, theme_qid)
+            print(f"P170 (last update) set to today on {theme_qid}.")
+        except Exception as exc:
+            print(f"WARN: could not set P170 on {theme_qid}: {exc}", file=sys.stderr)
+
     if failed:
         return 1
     return 0
@@ -537,6 +673,11 @@ def main(argv: list[str] | None = None) -> int:
         "--output", default="",
         help="Output path (default: <input stem>_kg.json alongside input)",
     )
+    p_convert.add_argument(
+        "--no-enrich-hf", dest="enrich_hf", action="store_false",
+        help="Skip fetching full descriptions from HuggingFace READMEs (enrichment is on by default)",
+    )
+    p_convert.set_defaults(enrich_hf=True)
 
     # --- import_to_mardi ---
     p_import = sub.add_parser(
