@@ -239,8 +239,86 @@ def download_markdown(
         ) from exc
 
 
-def main():
-    pass
+def _output_path(qid: str) -> str:
+    return os.path.join(os.path.dirname(__file__), f"{qid}_formulas.json")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "qid",
+        nargs="?",
+        default=None,
+        metavar="QID",
+        help="QID of the paper to process (e.g. Q6190920). Omit to list all available papers.",
+    )
+    args = parser.parse_args()
+
+    lakefs_url = os.environ.get("LAKEFS_URL", _LAKEFS_URL).strip()
+    lakefs_user = os.environ.get("LAKEFS_USER", "").strip()
+    lakefs_password = os.environ.get("LAKEFS_PASSWORD", "").strip()
+    lakefs_repo = os.environ.get("LAKEFS_REPO", _LAKEFS_REPO).strip()
+    lakefs_branch = os.environ.get("LAKEFS_BRANCH", _LAKEFS_BRANCH).strip()
+    sparql_endpoint = os.environ.get("SPARQL_ENDPOINT_URL", _SPARQL_ENDPOINT).strip()
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+
+    for name, val in [("LAKEFS_USER", lakefs_user), ("LAKEFS_PASSWORD", lakefs_password)]:
+        if not val:
+            sys.exit(f"Missing environment variable: {name}")
+
+    # --- Stage 1: scan lakeFS ---
+    log.info("Scanning lakeFS %s/%s for .md.txt files…", lakefs_repo, lakefs_branch)
+    qids = list_lakefs_papers(lakefs_url, lakefs_user, lakefs_password, lakefs_repo, lakefs_branch)
+    log.info("Found %d paper(s)", len(qids))
+
+    # --- Stage 2: fetch titles ---
+    session = requests.Session()
+    log.info("Fetching paper titles from SPARQL…")
+    titles = get_paper_titles(qids, sparql_endpoint, session)
+
+    # --- Stage 3: display table ---
+    print(f"\n{'QID':<15} {'Title'}")
+    print("-" * 80)
+    for q in qids:
+        title = titles.get(q, "")
+        print(f"{q:<15} {title or '(no title in KG)'}")
+    print(f"\n{len(qids)} paper(s) available in lakeFS.\n")
+
+    if not args.qid:
+        sys.exit(0)
+
+    # --- Stage 4: validate requested QID ---
+    target = args.qid.upper()
+    if target not in qids:
+        sys.exit(f"QID {target!r} not found in lakeFS. Run without argument to list available papers.")
+
+    if not openrouter_key:
+        sys.exit("Missing environment variable: OPENROUTER_API_KEY")
+
+    # --- Stage 5: download Markdown ---
+    log.info("Downloading Markdown for %s…", target)
+    try:
+        markdown = download_markdown(target, lakefs_url, lakefs_user, lakefs_password, lakefs_repo, lakefs_branch)
+    except FileNotFoundError as exc:
+        sys.exit(str(exc))
+    log.info("Downloaded %d characters", len(markdown))
+
+    # --- Stage 6: call LLM ---
+    log.info("Sending to %s via OpenRouter…", _MODEL)
+    try:
+        formulas = extract_formulas_llm(markdown, openrouter_key)
+    except (ValueError, requests.RequestException) as exc:
+        sys.exit(f"LLM extraction failed: {exc}")
+    log.info("Extracted %d formula(s)", len(formulas))
+
+    # --- Stage 7: save output ---
+    out_path = _output_path(target)
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(formulas, fh, indent=2, ensure_ascii=False)
+    print(f"Wrote {len(formulas)} formula(s) to {out_path}")
 
 
 if __name__ == "__main__":
