@@ -76,3 +76,36 @@ def test_get_paper_titles_maps_qids():
 
     assert result["Q6190920"] == "A fast algorithm for sparse matrices"
     assert result["Q9999"] == ""  # not in response → empty string
+
+
+def test_download_markdown_returns_content():
+    from maintenance.extract_formulas import download_markdown
+
+    fake_content = b"# Paper\n\n$$E = mc^2$$\n"
+
+    with patch("maintenance.extract_formulas.lakefs") as mock_lf:
+        mock_obj = MagicMock()
+        mock_obj.reader.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=fake_content)))
+        mock_obj.reader.return_value.__exit__ = MagicMock(return_value=False)
+        mock_lf.Client.return_value = MagicMock()
+        mock_lf.repository.return_value.branch.return_value.object.return_value = mock_obj
+
+        result = download_markdown("Q6190920", "http://fake", "u", "p", "repo", "main")
+
+    assert result == fake_content.decode("utf-8")
+
+
+def test_download_markdown_raises_on_missing():
+    from maintenance.extract_formulas import download_markdown
+
+    with patch("maintenance.extract_formulas.lakefs") as mock_lf:
+        mock_obj = MagicMock()
+        mock_obj.reader.side_effect = Exception("not found")
+        mock_lf.Client.return_value = MagicMock()
+        mock_lf.repository.return_value.branch.return_value.object.return_value = mock_obj
+
+        try:
+            download_markdown("Q9999", "http://fake", "u", "p", "repo", "main")
+            assert False, "should have raised"
+        except FileNotFoundError:
+            pass

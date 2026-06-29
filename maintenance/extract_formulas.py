@@ -105,6 +105,30 @@ SELECT ?paper ?title WHERE {{
     return result
 
 
+def download_markdown(
+    qid: str,
+    url: str,
+    user: str,
+    password: str,
+    repo: str,
+    branch: str,
+) -> str:
+    """Download the .md.txt content for *qid* from lakeFS and return as string.
+
+    Raises FileNotFoundError if the object does not exist.
+    """
+    client = lakefs.Client(host=url, username=user, password=password)
+    path = component_path(qid)
+    obj = lakefs.repository(repo, client=client).branch(branch).object(path)
+    try:
+        with obj.reader(mode="rb") as f:
+            return f.read().decode("utf-8")
+    except Exception as exc:
+        raise FileNotFoundError(
+            f"No lakeFS object for {qid} at {branch}/{path}: {exc}"
+        ) from exc
+
+
 def main():
     pass
 
