@@ -1,6 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import json
 from unittest.mock import MagicMock, patch
 import requests
 
@@ -108,4 +109,68 @@ def test_download_markdown_raises_on_missing():
             download_markdown("Q9999", "http://fake", "u", "p", "repo", "main")
             assert False, "should have raised"
         except FileNotFoundError:
+            pass
+
+
+def test_extract_formulas_llm_parses_response():
+    from maintenance.extract_formulas import extract_formulas_llm
+
+    formula_obj = {
+        "item_type": "mathematical object",
+        "label": "Mass-energy equivalence",
+        "defining_formula": "E = mc^2",
+        "description_long": "Describes the equivalence of mass and energy.",
+        "formula_type": "equation",
+        "classification": "standard",
+        "conditions": "",
+        "is_numbered": False,
+        "equation_number": "",
+        "symbols": [
+            {"symbol": "E", "represents": "energy", "type": "variable", "domain": "\\mathbb{R}"},
+            {"symbol": "m", "represents": "mass", "type": "variable", "domain": "\\mathbb{R}^+"},
+            {"symbol": "c", "represents": "speed of light", "type": "constant", "domain": "\\mathbb{R}^+"},
+        ],
+        "notation_variants": [],
+        "related_concepts": ["special relativity"],
+        "msc_codes_suggested": [],
+        "cross_references": {"dlmf": "", "wikidata_qid": "Q35875"},
+        "source": {
+            "section": "Introduction",
+            "formula_as_found": "E = mc^2",
+            "source_text": "Einstein showed that E = mc^2.",
+        },
+        "confidence": {"formula_extraction": 0.99, "classification": 0.95, "description": 0.96},
+        "review_status": "unreviewed",
+    }
+
+    fake_api_response = {
+        "choices": [{"message": {"content": json.dumps([formula_obj])}}]
+    }
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.json.return_value = fake_api_response
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        result = extract_formulas_llm("# Paper\n\n$$E = mc^2$$\n", "fake-key")
+
+    assert len(result) == 1
+    assert result[0]["label"] == "Mass-energy equivalence"
+    assert result[0]["review_status"] == "unreviewed"
+
+
+def test_extract_formulas_llm_raises_on_bad_json():
+    from maintenance.extract_formulas import extract_formulas_llm
+
+    fake_api_response = {
+        "choices": [{"message": {"content": "I found the following formulas: ..."}}]
+    }
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.json.return_value = fake_api_response
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        try:
+            extract_formulas_llm("# Paper\n\n$$x$$\n", "fake-key")
+            assert False, "should have raised ValueError"
+        except ValueError:
             pass
