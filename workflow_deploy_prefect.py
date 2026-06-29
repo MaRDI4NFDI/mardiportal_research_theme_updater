@@ -45,7 +45,7 @@ if __name__ == "__main__":
         work_pool_name=_WORK_POOL,
         job_variables=_JOB_VARIABLES,
         parameters={
-            "limit": 50,
+            "limit": 1000,
             "dry_run": False,
         },
     )

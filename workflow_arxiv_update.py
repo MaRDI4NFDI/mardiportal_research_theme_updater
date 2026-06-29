@@ -28,7 +28,7 @@ logging.getLogger("topic_overviews").setLevel(logging.INFO)
 
 @flow(name="topic-overviews-arxiv-update", log_prints=True)
 def arxiv_update(
-    limit: int = 50,
+    limit: int = 1000,
     dry_run: bool = False,
 ) -> None:
     logger = get_run_logger()
