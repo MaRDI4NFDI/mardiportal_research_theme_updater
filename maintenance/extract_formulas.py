@@ -27,7 +27,6 @@ import json
 import logging
 import os
 import sys
-import time
 
 import lakefs
 import requests
@@ -177,9 +176,10 @@ def _extract_json_array(text: str) -> list[dict]:
     # Strip ```json ... ``` fences if present
     if text.startswith("```"):
         lines = text.splitlines()
-        text = "\n".join(
-            line for line in lines if not line.strip().startswith("```")
-        ).strip()
+        # Drop opening fence (first line) and closing fence (last line if it starts with ```)
+        start_idx = 1
+        end_idx = len(lines) - 1 if lines[-1].strip().startswith("```") else len(lines)
+        text = "\n".join(lines[start_idx:end_idx]).strip()
     # Find first '[' and last ']'
     start = text.find("[")
     end = text.rfind("]")
@@ -211,7 +211,10 @@ def extract_formulas_llm(markdown: str, api_key: str) -> list[dict]:
         timeout=300,
     )
     resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
+    try:
+        content = resp.json()["choices"][0]["message"]["content"]
+    except (KeyError, IndexError) as exc:
+        raise ValueError(f"Unexpected OpenRouter response structure: {exc}") from exc
     return _extract_json_array(content)
 
 

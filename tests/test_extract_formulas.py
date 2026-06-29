@@ -3,6 +3,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
 from unittest.mock import MagicMock, patch
+import pytest
 import requests
 
 
@@ -105,11 +106,8 @@ def test_download_markdown_raises_on_missing():
         mock_lf.Client.return_value = MagicMock()
         mock_lf.repository.return_value.branch.return_value.object.return_value = mock_obj
 
-        try:
+        with pytest.raises(FileNotFoundError):
             download_markdown("Q9999", "http://fake", "u", "p", "repo", "main")
-            assert False, "should have raised"
-        except FileNotFoundError:
-            pass
 
 
 def test_extract_formulas_llm_parses_response():
@@ -169,8 +167,5 @@ def test_extract_formulas_llm_raises_on_bad_json():
         mock_post.return_value.json.return_value = fake_api_response
         mock_post.return_value.raise_for_status = MagicMock()
 
-        try:
+        with pytest.raises(ValueError):
             extract_formulas_llm("# Paper\n\n$$x$$\n", "fake-key")
-            assert False, "should have raised ValueError"
-        except ValueError:
-            pass
