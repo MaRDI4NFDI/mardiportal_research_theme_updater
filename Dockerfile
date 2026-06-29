@@ -1,9 +1,12 @@
 FROM prefecthq/prefect:3-latest
 
-COPY pyproject.toml ./
 RUN pip install --no-cache-dir \
-    git+https://github.com/MaRDI4NFDI/mardiclient.git \
-    ".[dev]"
+    anthropic \
+    requests \
+    beautifulsoup4 \
+    html2text \
+    lakefs \
+    git+https://github.com/MaRDI4NFDI/mardiclient.git
 
 WORKDIR /opt/prefect
 ENV PREFECT_LOGGING_LEVEL=INFO
