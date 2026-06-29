@@ -66,6 +66,7 @@ def topic_overviews(
         zbmath_query_property="P1979",
         since_days_property="P1968",
         auto_classify_keywords_property="P1990",
+        maintainer_qid="",
         since_days=since_days,
         llm_provider="openai",
         openai_base_url=_OPENAI_BASE_URL,
