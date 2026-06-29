@@ -195,7 +195,7 @@ def _process_record(
                 )
                 log.info("Uploaded arXiv HTML markdown for %s to lakeFS: %s", paper_qid, lakefs_path)
                 commit_upload(
-                    f"Add arXiv fulltext for {paper_qid}",
+                    f"Add arXiv paper markdown for {paper_qid}",
                     url=config.lakefs_url,
                     user=config.lakefs_user,
                     password=config.lakefs_password,
