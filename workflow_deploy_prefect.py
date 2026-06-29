@@ -14,7 +14,11 @@ from prefect import flow
 _SOURCE = "https://github.com/MaRDI4NFDI/mardiportal_research_theme_updater.git"
 _IMAGE = "ghcr.io/mardi4nfdi/mardiportal_research_theme_updater:latest"
 _WORK_POOL = "K8WorkerPool"
-_JOB_VARIABLES = {"image": _IMAGE, "env": {"PREFECT_LOGGING_EXTRA_LOGGERS": "topic_overviews"}}
+_JOB_VARIABLES = {
+    "image": _IMAGE,
+    "image_pull_policy": "Always",
+    "env": {"PREFECT_LOGGING_EXTRA_LOGGERS": "topic_overviews"},
+}
 
 if __name__ == "__main__":
     flow.from_source(
