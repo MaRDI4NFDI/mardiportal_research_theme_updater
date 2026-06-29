@@ -22,7 +22,7 @@ def shard_qid(qid: str) -> str:
 def component_path(qid: str) -> str:
     """Return the branch-relative lakeFS path for the arxiv fulltext component."""
     normalized = qid.upper()
-    return f"{shard_qid(normalized)}/fulltext/{normalized}.md"
+    return f"{shard_qid(normalized)}/fulltext/{normalized}.md.txt"
 
 
 def upload_markdown(

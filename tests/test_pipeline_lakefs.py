@@ -49,7 +49,7 @@ def test_upload_called_after_import():
     kg.import_paper.return_value = "Q9999"
 
     with patch("topic_overviews.pipeline.fetch_and_convert", return_value="# md") as mock_fetch, \
-         patch("topic_overviews.pipeline.upload_markdown", return_value="main/00/00/99/Q9999/fulltext/Q9999.md") as mock_upload:
+         patch("topic_overviews.pipeline.upload_markdown", return_value="main/00/00/99/Q9999/fulltext/Q9999.md.txt") as mock_upload:
         _process_record(
             record, "arxiv", [MagicMock(qid="Q1", matches_keywords=MagicMock(return_value=["kw"]))],
             config, _FakeState(), kg,

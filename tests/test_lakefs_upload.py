@@ -24,7 +24,7 @@ def test_shard_qid_invalid():
 
 
 def test_component_path():
-    assert component_path("Q6190920") == "61/90/92/Q6190920/fulltext/Q6190920.md"
+    assert component_path("Q6190920") == "61/90/92/Q6190920/fulltext/Q6190920.md.txt"
 
 
 def test_upload_markdown_calls_lakefs():
@@ -49,4 +49,4 @@ def test_upload_markdown_calls_lakefs():
     call_kwargs = mock_obj.upload.call_args
     content = call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get("data", b"")
     assert b"# Hello" in content
-    assert result == "main/61/90/92/Q6190920/fulltext/Q6190920.md"
+    assert result == "main/61/90/92/Q6190920/fulltext/Q6190920.md.txt"
