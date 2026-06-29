@@ -2,6 +2,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from unittest.mock import MagicMock, patch
+import requests
 
 
 def _make_obj(path):
@@ -50,3 +51,28 @@ def test_list_lakefs_papers_deduplicates():
         result = list_lakefs_papers("http://fake", "user", "pass", "repo", "main")
 
     assert result == ["Q6190920"]
+
+
+def test_get_paper_titles_maps_qids():
+    from maintenance.extract_formulas import get_paper_titles
+
+    fake_response = {
+        "results": {
+            "bindings": [
+                {
+                    "paper": {"value": "https://portal.mardi4nfdi.de/entity/Q6190920"},
+                    "title": {"value": "A fast algorithm for sparse matrices"},
+                },
+            ]
+        }
+    }
+
+    with patch("requests.Session.get") as mock_get:
+        mock_get.return_value.json.return_value = fake_response
+        mock_get.return_value.raise_for_status = MagicMock()
+
+        session = requests.Session()
+        result = get_paper_titles(["Q6190920", "Q9999"], "http://sparql", session)
+
+    assert result["Q6190920"] == "A fast algorithm for sparse matrices"
+    assert result["Q9999"] == ""  # not in response → empty string

@@ -73,6 +73,38 @@ def list_lakefs_papers(
     return result
 
 
+def get_paper_titles(
+    qids: list[str],
+    endpoint: str,
+    session: requests.Session,
+) -> dict[str, str]:
+    """Return {QID: title} for the given QIDs. Missing items map to empty string."""
+    if not qids:
+        return {}
+    values = " ".join(f"wd:{q}" for q in qids)
+    query = f"""
+PREFIX wd: <https://portal.mardi4nfdi.de/entity/>
+PREFIX wdt: <https://portal.mardi4nfdi.de/prop/direct/>
+SELECT ?paper ?title WHERE {{
+  VALUES ?paper {{ {values} }}
+  OPTIONAL {{ ?paper wdt:{M.P_TITLE} ?title }}
+}}
+"""
+    resp = session.get(
+        endpoint,
+        params={"query": query, "format": "json"},
+        headers={"Accept": "application/sparql-results+json"},
+        timeout=120,
+    )
+    resp.raise_for_status()
+    rows = resp.json()["results"]["bindings"]
+    result: dict[str, str] = {q: "" for q in qids}
+    for row in rows:
+        qid = row["paper"]["value"].rstrip("/").rsplit("/", 1)[-1]
+        result[qid] = row.get("title", {}).get("value", "")
+    return result
+
+
 def main():
     pass
 
