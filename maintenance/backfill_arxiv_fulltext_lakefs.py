@@ -32,7 +32,7 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from topic_overviews.arxiv_to_md import fetch_and_convert
-from topic_overviews.lakefs_upload import component_path, upload_markdown
+from topic_overviews.lakefs_upload import component_path, upload_markdown, commit_upload
 from topic_overviews.kg import model as M
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -181,6 +181,21 @@ def main() -> None:
             skipped_error += 1
 
         time.sleep(0.5)  # be polite to arXiv
+
+    if not args.dry_run and uploaded > 0:
+        log.info("Committing %d uploaded file(s)...", uploaded)
+        try:
+            commit_id = commit_upload(
+                f"backfill ({uploaded} papers)",
+                url=lakefs_url,
+                user=lakefs_user,
+                password=lakefs_password,
+                repo=lakefs_repo,
+                branch=lakefs_branch,
+            )
+            log.info("Committed: %s", commit_id)
+        except Exception as exc:
+            log.warning("Commit failed: %s", exc)
 
     print(
         f"\nDone. "

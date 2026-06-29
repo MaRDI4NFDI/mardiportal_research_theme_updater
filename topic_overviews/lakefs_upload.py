@@ -35,7 +35,10 @@ def upload_markdown(
     repo: str,
     branch: str = "main",
 ) -> str:
-    """Upload *markdown* to lakeFS and return the full object path (branch/...)."""
+    """Upload *markdown* to lakeFS and return the full object path (branch/...).
+
+    Does not commit — call commit_upload() afterwards.
+    """
     client = lakefs.Client(host=url, username=user, password=password)
     path = component_path(qid)
     lakefs.repository(repo, client=client).branch(branch).object(path).upload(
@@ -44,3 +47,22 @@ def upload_markdown(
         content_type="text/markdown; charset=utf-8",
     )
     return f"{branch}/{path}"
+
+
+def commit_upload(
+    message: str,
+    *,
+    url: str,
+    user: str,
+    password: str,
+    repo: str,
+    branch: str = "main",
+    metadata: dict | None = None,
+) -> str:
+    """Commit all staged changes on *branch* and return the commit ID."""
+    client = lakefs.Client(host=url, username=user, password=password)
+    ref = lakefs.repository(repo, client=client).branch(branch).commit(
+        message=message,
+        metadata=metadata or {},
+    )
+    return ref.id

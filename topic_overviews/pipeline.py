@@ -28,7 +28,7 @@ from .llm.keyworder import keywords_paper
 from .llm.client import make_llm_client
 from .wiki.page_builder import RESEARCH_THEME_STUB
 from .arxiv_to_md import fetch_and_convert
-from .lakefs_upload import upload_markdown
+from .lakefs_upload import upload_markdown, commit_upload
 
 log = logging.getLogger(__name__)
 
@@ -194,6 +194,15 @@ def _process_record(
                     branch=config.lakefs_branch,
                 )
                 log.info("Uploaded arXiv HTML markdown for %s to lakeFS: %s", paper_qid, lakefs_path)
+                commit_upload(
+                    f"Add arXiv fulltext for {paper_qid}",
+                    url=config.lakefs_url,
+                    user=config.lakefs_user,
+                    password=config.lakefs_password,
+                    repo=config.lakefs_repo,
+                    branch=config.lakefs_branch,
+                    metadata={"qid": paper_qid, "arxiv_id": record.arxiv_id},
+                )
             except Exception as exc:
                 log.warning("lakeFS upload failed for %s (%s): %s", paper_qid, record.arxiv_id, exc)
         # Inline zbMATH enrichment for arXiv/OpenAlex records (adds P225 + P676 author resolution).
