@@ -25,4 +25,8 @@ if __name__ == "__main__":
     create("topic-overviews-bot-password",    "MediaWiki bot password")
     create("topic-overviews-openai-api-key",  "ZIB Ollama API key (OLLAMA_API_KEY)")
     create("topic-overviews-s2-api-key",      "Semantic Scholar API key (S2_API_KEY)")
+    # lakeFS credentials — sourced from k8s secret in production namespace.
+    # Confirm secret name/keys first: kubectl get secret -n production lakefs -o jsonpath='{.data.access-key}' | base64 -d
+    create("topic-overviews-lakefs-user",     "lakeFS access key ID")
+    create("topic-overviews-lakefs-password", "lakeFS secret access key")
     print("\nDone.")

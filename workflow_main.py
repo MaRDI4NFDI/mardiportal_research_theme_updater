@@ -9,6 +9,7 @@ Local dev: use run_locally.sh + .env instead.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 
 from prefect import flow, get_run_logger
@@ -30,6 +31,9 @@ _SPARQL_ENDPOINT_URL = "https://query.portal.mardi4nfdi.de/sparql"
 _RESEARCH_THEME_QID = "Q7266523"
 _MODEL_QID = "Q7269921"
 _OPENAI_BASE_URL = "https://ollama.zib.de/api"
+_LAKEFS_URL = os.environ.get("LAKEFS_URL", "")
+_LAKEFS_REPO = os.environ.get("LAKEFS_REPO", "mardi-portal")
+_LAKEFS_BRANCH = os.environ.get("LAKEFS_BRANCH", "main")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logging.getLogger("topic_overviews").setLevel(logging.INFO)
@@ -56,6 +60,12 @@ def topic_overviews(
         s2_api_key = Secret.load("topic-overviews-s2-api-key").get()
     except Exception:
         s2_api_key = ""
+    try:
+        lakefs_user = Secret.load("topic-overviews-lakefs-user").get()
+        lakefs_password = Secret.load("topic-overviews-lakefs-password").get()
+    except Exception:
+        lakefs_user = ""
+        lakefs_password = ""
 
     config = Config(
         arxiv_query="",
@@ -83,6 +93,11 @@ def topic_overviews(
         sparql_endpoint_url=_SPARQL_ENDPOINT_URL,
         s2_api_key=s2_api_key,
         dry_run=dry_run,
+        lakefs_url=_LAKEFS_URL,
+        lakefs_user=lakefs_user,
+        lakefs_password=lakefs_password,
+        lakefs_repo=_LAKEFS_REPO,
+        lakefs_branch=_LAKEFS_BRANCH,
     )
 
     model = ""

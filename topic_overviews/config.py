@@ -33,6 +33,11 @@ class Config:
     sparql_endpoint_url: str
     s2_api_key: str
     dry_run: bool
+    lakefs_url: str
+    lakefs_user: str
+    lakefs_password: str
+    lakefs_repo: str
+    lakefs_branch: str
 
 
 def _flag(value: str) -> bool:
@@ -66,4 +71,9 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         sparql_endpoint_url=env.get("SPARQL_ENDPOINT_URL", ""),
         s2_api_key=env.get("TOPIC_OVERVIEWS_S2_API_KEY", ""),
         dry_run=_flag(env.get("TOPIC_OVERVIEWS_DRY_RUN", "false")),
+        lakefs_url=env.get("LAKEFS_URL", ""),
+        lakefs_user=env.get("LAKEFS_USER", ""),
+        lakefs_password=env.get("LAKEFS_PASSWORD", ""),
+        lakefs_repo=env.get("LAKEFS_REPO", ""),
+        lakefs_branch=env.get("LAKEFS_BRANCH", "main"),
     )
