@@ -9,37 +9,39 @@ Run once (or after changes to parameters/schedule) with:
 Schedules can also be set or changed via the Prefect UI after deployment
 (Deployments → <name> → + Schedule).
 """
-from prefect.deployments import deploy
+from prefect import flow
 
-from workflow_main import topic_overviews
-from workflow_arxiv_update import arxiv_update
-
+_SOURCE = "https://github.com/MaRDI4NFDI/mardiportal_research_theme_updater.git"
 _IMAGE = "ghcr.io/mardi4nfdi/mardiportal_research_theme_updater:latest"
 _WORK_POOL = "K8WorkerPool"
 _JOB_VARIABLES = {"image": _IMAGE, "env": {"PREFECT_LOGGING_EXTRA_LOGGERS": "topic_overviews"}}
 
 if __name__ == "__main__":
-    deploy(
-        topic_overviews.to_deployment(
-            name="topic-overviews",
-            job_variables=_JOB_VARIABLES,
-            parameters={
-                "since_days": 10,
-                "harvest_limit": 0,
-                "theme_max_papers": 100,
-                "dry_run": False,
-                "themes_only": False,
-            },
-        ),
-        arxiv_update.to_deployment(
-            name="topic-overviews-arxiv-update",
-            job_variables=_JOB_VARIABLES,
-            parameters={
-                "limit": 50,
-                "dry_run": False,
-            },
-        ),
+    flow.from_source(
+        source=_SOURCE,
+        entrypoint="workflow_main.py:topic_overviews",
+    ).deploy(
+        name="topic-overviews",
         work_pool_name=_WORK_POOL,
-        image=_IMAGE,
-        push=False,
+        job_variables=_JOB_VARIABLES,
+        parameters={
+            "since_days": 10,
+            "harvest_limit": 0,
+            "theme_max_papers": 100,
+            "dry_run": False,
+            "themes_only": False,
+        },
+    )
+
+    flow.from_source(
+        source=_SOURCE,
+        entrypoint="workflow_arxiv_update.py:arxiv_update",
+    ).deploy(
+        name="topic-overviews-arxiv-update",
+        work_pool_name=_WORK_POOL,
+        job_variables=_JOB_VARIABLES,
+        parameters={
+            "limit": 50,
+            "dry_run": False,
+        },
     )
