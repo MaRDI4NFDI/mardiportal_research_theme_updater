@@ -61,8 +61,8 @@ def topic_overviews(
     except Exception:
         s2_api_key = ""
     try:
-        lakefs_user = Secret.load("topic-overviews-lakefs-user").get()
-        lakefs_password = Secret.load("topic-overviews-lakefs-password").get()
+        lakefs_user = Secret.load("lakefs-user").get()
+        lakefs_password = Secret.load("lakefs-password").get()
     except Exception:
         lakefs_user = ""
         lakefs_password = ""
