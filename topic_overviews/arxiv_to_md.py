@@ -38,6 +38,11 @@ def _convert_html(html: str) -> str:
     """Convert arXiv HTML5 string to Markdown, replacing MathML with $...$."""
     soup = BeautifulSoup(html, "html.parser")
 
+    # arXiv HTML5 wraps the paper in <article>; use it to skip site header/nav
+    article = soup.find("article")
+    if article:
+        soup = BeautifulSoup(str(article), "html.parser")
+
     # Numbered display equations: <table class="ltx_equation ...">
     for table in soup.find_all("table", class_="ltx_equation"):
         math_tag = table.find("math")
