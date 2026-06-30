@@ -19,6 +19,7 @@ Environment variables:
     LAKEFS_BRANCH       (default: main)
     SPARQL_ENDPOINT_URL (default: https://query.portal.mardi4nfdi.de/sparql)
     OPENROUTER_API_KEY  API key for openrouter.ai
+    OPENROUTER_MODEL    model to use (default: z-ai/glm-4.7-flash)
 """
 from __future__ import annotations
 
@@ -167,6 +168,71 @@ If the paper contains no mathematical formulas, return an empty JSON array: []
 """
 
 
+_VALID_ESCAPE_CHARS = set('"' + "\\" + "/bfnrtu")
+
+
+_CTRL_ESCAPE = {"\n": "\\n", "\r": "\\r", "\t": "\\t", "\b": "\\b", "\f": "\\f"}
+
+
+def _fix_invalid_escapes(s: str) -> str:
+    """Double any backslash not followed by a valid JSON escape character.
+
+    Steps over valid escape sequences as a pair so that e.g. \\\\int is not
+    re-processed and the trailing \\i misidentified as invalid.
+    """
+    result: list[str] = []
+    i = 0
+    while i < len(s):
+        if s[i] == "\\":
+            if i + 1 < len(s) and s[i + 1] in _VALID_ESCAPE_CHARS:
+                result.append(s[i])
+                result.append(s[i + 1])
+                if s[i + 1] == "u":
+                    result.append(s[i + 2 : i + 6])
+                    i += 6
+                else:
+                    i += 2
+            else:
+                result.append("\\\\")
+                i += 1
+        else:
+            result.append(s[i])
+            i += 1
+    return "".join(result)
+
+
+def _fix_control_chars(s: str) -> str:
+    """Escape raw control characters that appear inside JSON string literals."""
+    result: list[str] = []
+    in_string = False
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if in_string:
+            if c == "\\":
+                result.append(c)
+                i += 1
+                if i < len(s):
+                    result.append(s[i])
+                    i += 1
+                continue
+            elif c == '"':
+                in_string = False
+                result.append(c)
+            elif ord(c) < 0x20:
+                result.append(_CTRL_ESCAPE.get(c, f"\\u{ord(c):04x}"))
+            else:
+                result.append(c)
+        else:
+            if c == '"':
+                in_string = True
+                result.append(c)
+            else:
+                result.append(c)
+        i += 1
+    return "".join(result)
+
+
 def _extract_json_array(text: str) -> list[dict]:
     """Extract a JSON array from LLM response text.
 
@@ -185,16 +251,38 @@ def _extract_json_array(text: str) -> list[dict]:
     end = text.rfind("]")
     if start == -1 or end == -1:
         raise ValueError(f"No JSON array found in LLM response: {text[:200]!r}")
-    return json.loads(text[start : end + 1])
+    candidate = text[start : end + 1]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as first_exc:
+        for label, fn in [
+            ("backslash fix", _fix_invalid_escapes),
+            ("control-char fix", _fix_control_chars),
+            ("both fixes", lambda s: _fix_control_chars(_fix_invalid_escapes(s))),
+        ]:
+            log.warning("JSON parse error (%s), attempting %s…", first_exc.msg, label)
+            try:
+                return json.loads(fn(candidate))
+            except json.JSONDecodeError:
+                pass
+        raw_path = os.path.join(os.path.dirname(__file__), "_last_llm_response.txt")
+        with open(raw_path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        context_start = max(0, first_exc.pos - 120)
+        context_end = min(len(candidate), first_exc.pos + 120)
+        log.error("JSON parse error at char %d: %s", first_exc.pos, first_exc.msg)
+        log.error("Context: …%r…", candidate[context_start:context_end])
+        log.error("Raw LLM response saved to %s", raw_path)
+        raise ValueError(str(first_exc)) from first_exc
 
 
-def extract_formulas_llm(markdown: str, api_key: str) -> list[dict]:
+def extract_formulas_llm(markdown: str, api_key: str, model: str = _MODEL) -> list[dict]:
     """Send *markdown* to OpenRouter and return extracted formulas as a list of dicts.
 
     Raises ValueError if the response cannot be parsed as a JSON array.
     """
     payload = {
-        "model": _MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": markdown},
@@ -267,36 +355,31 @@ def main() -> None:
     lakefs_branch = os.environ.get("LAKEFS_BRANCH", _LAKEFS_BRANCH).strip()
     sparql_endpoint = os.environ.get("SPARQL_ENDPOINT_URL", _SPARQL_ENDPOINT).strip()
     openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    openrouter_model = os.environ.get("OPENROUTER_MODEL", _MODEL).strip()
 
     for name, val in [("LAKEFS_USER", lakefs_user), ("LAKEFS_PASSWORD", lakefs_password)]:
         if not val:
             sys.exit(f"Missing environment variable: {name}")
 
-    # --- Stage 1: scan lakeFS ---
-    log.info("Scanning lakeFS %s/%s for .md.txt files…", lakefs_repo, lakefs_branch)
-    qids = list_lakefs_papers(lakefs_url, lakefs_user, lakefs_password, lakefs_repo, lakefs_branch)
-    log.info("Found %d paper(s)", len(qids))
-
-    # --- Stage 2: fetch titles ---
-    session = requests.Session()
-    log.info("Fetching paper titles from SPARQL…")
-    titles = get_paper_titles(qids, sparql_endpoint, session)
-
-    # --- Stage 3: display table ---
-    print(f"\n{'QID':<15} {'Title'}")
-    print("-" * 80)
-    for q in qids:
-        title = titles.get(q, "")
-        print(f"{q:<15} {title or '(no title in KG)'}")
-    print(f"\n{len(qids)} paper(s) available in lakeFS.\n")
-
     if not args.qid:
+        # --- List mode: scan lakeFS, fetch titles, display table ---
+        log.info("Scanning lakeFS %s/%s for .md.txt files…", lakefs_repo, lakefs_branch)
+        qids = list_lakefs_papers(lakefs_url, lakefs_user, lakefs_password, lakefs_repo, lakefs_branch)
+        log.info("Found %d paper(s)", len(qids))
+        session = requests.Session()
+        log.info("Fetching paper titles from SPARQL…")
+        titles = get_paper_titles(qids, sparql_endpoint, session)
+        print(f"\n{'QID':<15} {'Title'}")
+        print("-" * 80)
+        for q in qids:
+            title = titles.get(q, "")
+            print(f"{q:<15} {title or '(no title in KG)'}")
+        print(f"\n{len(qids)} paper(s) available in lakeFS.\n")
         sys.exit(0)
 
     # --- Stage 4: validate requested QID ---
     target = args.qid.upper()
-    if target not in qids:
-        sys.exit(f"QID {target!r} not found in lakeFS. Run without argument to list available papers.")
+    session = requests.Session()
 
     if not openrouter_key:
         sys.exit("Missing environment variable: OPENROUTER_API_KEY")
@@ -309,10 +392,15 @@ def main() -> None:
         sys.exit(str(exc))
     log.info("Downloaded %d characters", len(markdown))
 
+    fulltext_path = os.path.join(os.path.dirname(__file__), f"{target}_fulltext.md")
+    with open(fulltext_path, "w", encoding="utf-8") as fh:
+        fh.write(markdown)
+    log.info("Saved fulltext to %s", fulltext_path)
+
     # --- Stage 6: call LLM ---
-    log.info("Sending to %s via OpenRouter…", _MODEL)
+    log.info("Sending to %s via OpenRouter…", openrouter_model)
     try:
-        formulas = extract_formulas_llm(markdown, openrouter_key)
+        formulas = extract_formulas_llm(markdown, openrouter_key, openrouter_model)
     except (ValueError, requests.RequestException) as exc:
         sys.exit(f"LLM extraction failed: {exc}")
     log.info("Extracted %d formula(s)", len(formulas))
