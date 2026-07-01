@@ -34,6 +34,15 @@ def fetch_and_convert(arxiv_id: str) -> str:
     ) from last_exc
 
 
+def _equation_metadata(source_id: str, number: str) -> str:
+    """Return a visible, machine-readable marker for an arXiv equation."""
+    return (
+        "[Equation metadata: "
+        f"source_id={source_id or 'unknown'}; "
+        f"number={number or 'unnumbered'}]"
+    )
+
+
 def _convert_html(html: str) -> str:
     """Convert arXiv HTML5 string to Markdown, replacing MathML with $...$."""
     soup = BeautifulSoup(html, "html.parser")
@@ -43,11 +52,24 @@ def _convert_html(html: str) -> str:
     if article:
         soup = BeautifulSoup(str(article), "html.parser")
 
+    # Multi-row equation groups are best left as tables so their row structure
+    # survives html2text. Insert metadata immediately before each group; the
+    # remaining <math> pass below converts every cell to LaTeX.
+    for group in soup.select("table.ltx_equationgroup"):
+        tag = group.select_one(".ltx_tag_equation")
+        number = tag.get_text(" ", strip=True) if tag else ""
+        marker = soup.new_tag("p")
+        marker.string = _equation_metadata(group.get("id", ""), number)
+        group.insert_before(marker)
+
     # Numbered display equations: <table class="ltx_equation ...">
     for table in soup.find_all("table", class_="ltx_equation"):
         math_tag = table.find("math")
         latex = math_tag.get("alttext", "") if math_tag else ""
-        table.replace_with(f"\n\n$${latex}$$\n\n")
+        tag = table.select_one(".ltx_tag_equation")
+        number = tag.get_text(" ", strip=True) if tag else ""
+        marker = _equation_metadata(table.get("id", ""), number)
+        table.replace_with(f"\n\n{marker}\n\n$${latex}$$\n\n")
 
     # Remaining <math> elements (inline, or display="block" unnumbered)
     for tag in soup.find_all("math"):

@@ -137,17 +137,20 @@ Output requirements:
 
 ## 0. Document coverage
 
-The input is the full text of one paper, from its title through its final section (proofs, appendices, and all). You must process it section by section, in order, all the way to the end of the supplied Markdown — never stop after the introduction or after a "statement of results" section.
+Process the entire supplied paper in order, including proofs, appendices, and
+captions. An introduction or "statement of results" section is not the scope
+boundary. Include every formula meeting Section 1; never return a representative
+sample or only the most important results. Before responding, confirm internally
+that extraction reaches the paper's final mathematical content.
 
-Sections titled "introduction," "statement of results," "main results," or similar name only the *headline* theorems; they are not the scope boundary for extraction. Proof sections ("Proof of Theorem ...", appendices, etc.) routinely contain lemmas, recurrences, and intermediate identities that meet the inclusion criteria in Section 1 below and must be extracted with the same rigor as the headline theorems.
+This is a real extraction job whose output is consumed programmatically, not a
+demo, example, illustration, or simulation. Every candidate you identify that
+meets Section 1 must appear in the JSON array. Never output only the first N
+records or a subset intended to illustrate the schema.
 
-Do not plan to extract only the "main" theorems and definitions while treating lemmas or proof-derivation formulas as out of scope — Section 1's inclusion list explicitly names lemma and corollary formulas, and that applies uniformly across the whole document, not just the opening section.
-
-Before emitting output, confirm internally that your extraction reaches the last numbered or displayed formula in the supplied Markdown. If the paper has proof sections after the statement of results, your output must include formulas from those sections too.
-
-This is a real extraction job whose output is consumed programmatically, not an illustrative sample, a demonstration, or a simulation. If you privately enumerate candidate formulas before writing the JSON array, every candidate that meets the inclusion criteria in Section 1 must appear in the output — do not decide partway through that you will emit only "the most important ones," "a representative subset," or "the first N as an example." There is no length limit on the array: a long, exhaustive array is the correct and expected output, not a problem to economize around.
-
-If you are genuinely short on output budget, degrade gracefully rather than dropping formulas silently: keep every formula record but shorten low-value optional fields first (`description_long`, `notation_variants`, `related_concepts`, secondary `symbols` entries) before omitting any formula entirely. Never omit a formula from the output array merely to save space or time.
+If output space is limited, keep every formula record and shorten or omit
+`description`, enrichment fields, and other optional metadata first. Never omit
+a formula record merely to save output space.
 
 ## 1. Extraction scope
 
@@ -206,20 +209,17 @@ For `defining_formula`:
 * do not expand, simplify, rearrange, or algebraically transform the formula;
 * do not silently repair malformed source LaTeX.
 
-If the Markdown appears corrupted, preserve the source text, provide the best conservative normalization, add a warning, and reduce extraction confidence.
+If the Markdown appears corrupted, preserve the source text, provide the best
+conservative normalization, add a warning, and set `requires_source_check`.
 
 ## 5. Classification policy
 
-Use `formula_type_primary` for the principal role of the formula and `formula_types_secondary` for additional applicable roles.
-
-Allowed formula types:
+Use `formula_type` for the mathematical form of the formula. Allowed values:
 
 * `equation`
 * `inequality`
 * `identity`
 * `definition`
-* `theorem_statement`
-* `lemma_statement`
 * `approximation`
 * `bound`
 * `recurrence`
@@ -227,15 +227,57 @@ Allowed formula types:
 * `optimization_problem`
 * `condition`
 
-Use the following novelty classifications:
+Use the most specific applicable type. Prefer `definition`, `recurrence`,
+`approximation`, `bound`, `identity`, `inequality`, `representation`,
+`condition`, then `equation`. Use `bound` for an upper or lower estimate and
+`identity` only for a relation asserted for all admissible values.
 
-* `standard`: a well-known established formula or definition;
-* `paper_result`: derived or proved as a result of this paper;
-* `cited_result`: attributed to earlier work;
-* `adaptation`: an adjusted or specialized form of an established formula;
-* `unknown`: insufficient evidence to decide.
+Record origin independently of the formula's role:
 
-Do not infer novelty solely because a formula occurs in a theorem.
+* `standard`: established mathematical knowledge not attributed here to a
+  specific source;
+* `cited_source`: explicitly attributed to earlier work;
+* `current_paper`: introduced, derived, or proved by this paper;
+* `unclear`: insufficient evidence.
+
+Set `is_adaptation` to true only for an adjusted or specialized form of an
+established or cited formula. Preserve explicit citation identifiers and
+attribution wording. Do not infer familiarity or attribution from the formula
+alone.
+
+Set `established_name` to the established mathematical name explicitly used by
+the paper, such as `"Peano kernel theorem"`. Use an empty string when the paper
+does not supply an established name; do not create a descriptive name for this
+field. The ordinary `label` field may still contain a generated descriptive
+label.
+
+Use `statement_role` to describe how the formula functions in the paper:
+
+* `headline_result`: a principal result emphasized by the paper;
+* `supporting_result`: an independently meaningful result used to support the
+  main argument, including cited or standard results used by the paper;
+* `definition`: a definition of an object or notation;
+* `assumption`: a hypothesis or condition imposed on later results;
+* `derivation_step`: an intermediate proof or calculation step that is not an
+  independently meaningful result.
+
+Use `statement_environment` for an explicit `theorem`, `lemma`, `proposition`,
+or `corollary` environment; otherwise use `none`. A formula's environment does
+not determine its mathematical type or origin.
+
+In `derived_from_formula_ids`, record only formulas that are direct premises or
+derivation inputs. Do not link formulas merely because they are nearby, share
+symbols, or discuss the same topic. Python derives reverse support links.
+
+The Markdown may place a source marker immediately before a formula:
+
+`[Equation metadata: source_id=S1.E1; number=(1.1)]`
+
+For every formula associated with such a marker, copy `source_id` exactly into
+`occurrences[].source_id` and copy `number` exactly into
+`occurrences[].equation_number`. When the marker says `number=unnumbered`, use
+an empty `equation_number`. Do not infer, normalize, or renumber these values.
+For a multi-row equation group, the marker applies to the complete group.
 
 ## 6. Schema
 
@@ -243,15 +285,24 @@ Each array element must have this structure:
 
 {
   "formula_id": "F0001",
-  "item_type": "mathematical formula",
   "label": "concise human-readable label",
   "defining_formula": "normalized LaTeX",
   "formula_as_found_primary": "verbatim LaTeX from the clearest occurrence",
-  "description_long": "precise explanation of the mathematical statement and its role in the paper",
-  "formula_type_primary": "definition",
-  "formula_types_secondary": ["equation"],
-  "classification": "standard",
-  "classification_basis": "brief reason based on the paper, or empty string",
+  "description": "precise explanation of the statement and its role",
+  "formula_type": "definition",
+  "origin": "standard",
+  "is_adaptation": false,
+  "statement_role": "definition",
+  "statement_environment": "none",
+  "classification_evidence": [
+    "The surrounding text explicitly calls this a standard definition"
+  ],
+  "provenance": {
+    "citation_keys": [],
+    "attribution_text": ""
+  },
+  "established_name": "Peano kernel theorem",
+  "derived_from_formula_ids": [],
   "conditions": [
     {
       "latex": "n \\geq 2",
@@ -259,26 +310,13 @@ Each array element must have this structure:
       "explicit": true
     }
   ],
-  "is_numbered": true,
-  "equation_number": "(3.2)",
-  "equation_label_raw": "(3.2)",
   "symbols": [
     {
       "symbol": "n",
-      "canonical_symbol": "n",
       "represents": "number of mesh intervals",
       "type": "index",
-      "domain": "\\mathbb{N}",
-      "codomain": "",
-      "definition_status": "explicit",
-      "scope": "global",
-      "confidence": 0.99
-    }
-  ],
-  "notation_variants": [
-    {
-      "formula": "alternative LaTeX notation",
-      "context": "where or why this variant is used"
+      "introduced_in_formula_id": "F0001",
+      "is_paper_local": false
     }
   ],
   "related_concepts": [
@@ -293,38 +331,26 @@ Each array element must have this structure:
   "occurrences": [
     {
       "section": "1. Introduction and statement of the results",
-      "subsection": "",
       "context_type": "definition",
-      "equation_number": "(1.5)",
+      "source_id": "S1.E1",
+      "equation_number": "(1.1)",
       "formula_as_found": "verbatim LaTeX at this occurrence",
-      "source_text_before": "sentence immediately before the formula",
-      "source_text_after": "sentence immediately after the formula",
       "markdown_locator": "heading and local occurrence index"
     }
   ],
   "source_integrity": "clean",
   "warnings": [],
-  "confidence": {
-    "formula_extraction": 0.99,
-    "deduplication": 0.95,
-    "classification": 0.90,
-    "description": 0.95,
-    "symbols": 0.93
-  },
-  "requires_source_check": false,
-  "review_status": "unreviewed"
+  "requires_source_check": false
 }
 
 ## 7. Field constraints
 
-`formula_type_primary` and entries in `formula_types_secondary` must be selected from:
+`formula_type` must be one of:
 
 * `equation`
 * `inequality`
 * `identity`
 * `definition`
-* `theorem_statement`
-* `lemma_statement`
 * `approximation`
 * `bound`
 * `recurrence`
@@ -332,13 +358,56 @@ Each array element must have this structure:
 * `optimization_problem`
 * `condition`
 
-`classification` must be one of:
+`origin` must be one of:
 
 * `standard`
-* `paper_result`
-* `cited_result`
-* `adaptation`
-* `unknown`
+* `cited_source`
+* `current_paper`
+* `unclear`
+
+`classification_evidence` must contain one or more concise, source-grounded
+observations supporting `origin`, `is_adaptation`, and `statement_role`. Do not
+use unsupported claims such as "this is well known." For `origin: "unclear"`,
+state what evidence is missing.
+
+`provenance.citation_keys` must contain only citation identifiers explicitly
+associated with the formula in the supplied paper. Preserve their source form,
+for example `"12"` or `"Smith2020"`, and use an empty array when none is given.
+
+`provenance.attribution_text` must preserve the concise source wording that
+attributes the formula, theorem, or result. Use an empty string when there is no
+explicit attribution.
+
+`is_adaptation` must be a JSON boolean.
+
+`established_name` must contain only a name explicitly supported by the paper;
+otherwise use an empty string.
+
+`statement_role` must be one of:
+
+* `headline_result`
+* `supporting_result`
+* `definition`
+* `assumption`
+* `derivation_step`
+
+`statement_environment` must be one of:
+
+* `theorem`
+* `lemma`
+* `proposition`
+* `corollary`
+* `none`
+
+`derived_from_formula_ids` must contain only valid, non-duplicate `formula_id`
+values from the same output array and must not contain the record's own ID.
+
+`occurrences[].source_id` must contain the exact `source_id` from the associated
+equation metadata marker, or an empty string when no marker is present.
+
+`occurrences[].equation_number` must contain the exact parenthesized `number`
+from the associated marker. Use an empty string when the marker says
+`number=unnumbered` or no equation number is present.
 
 `symbol.type` must be one of:
 
@@ -351,11 +420,15 @@ Each array element must have this structure:
 * `parameter`
 * `functional`
 
-`symbol.definition_status` must be one of:
+`symbol.introduced_in_formula_id` must contain the `formula_id` of the extracted
+formula that introduces or defines the symbol, including the current record's
+ID when applicable. Use an empty string when the symbol is introduced only in
+prose, is established notation not introduced by this paper, or cannot be
+identified reliably.
 
-* `explicit`
-* `inferred`
-* `unknown`
+`symbol.is_paper_local` must be a JSON boolean. Set it to true only for notation
+introduced specifically for this paper's argument or construction, and false
+for established mathematical notation and generic bound variables.
 
 `source_integrity` must be one of:
 
@@ -365,19 +438,9 @@ Each array element must have this structure:
 
 `conditions` must be an empty array when no conditions are stated or reliably inferred.
 
-`is_numbered` is true only when the paper visibly assigns a number or label to the formula.
-
-`equation_number` must contain the normalized equation number when available; otherwise use an empty string.
-
-`equation_label_raw` must preserve the exact source label; otherwise use an empty string.
-
 `msc_codes_suggested` must be empty when no formula-specific or concept-specific MSC assignment is reasonably supported.
 
 Do not invent DLMF references or Wikidata QIDs. Use empty strings when not known with high confidence.
-
-All confidence values must be numbers between 0.0 and 1.0.
-
-`review_status` must always be `"unreviewed"`.
 
 ## 8. Source fidelity
 
@@ -390,7 +453,6 @@ When a formula cannot be reconstructed reliably from the Markdown:
 * preserve the damaged source;
 * set `source_integrity` to `possibly_corrupted` or `corrupted`;
 * set `requires_source_check` to true;
-* lower `formula_extraction` confidence;
 * explain the problem in `warnings`.
 
 If the paper contains no mathematical formulas, return an empty JSON array: []
@@ -503,6 +565,92 @@ def _extract_json_array(text: str) -> list[dict]:
         log.error("Context: …%r…", candidate[context_start:context_end])
         log.error("Raw LLM response saved to %s", raw_path)
         raise ValueError(str(first_exc)) from first_exc
+
+
+def _derive_metadata(formulas: list[dict]) -> list[dict]:
+    """Add deterministic fields and reverse links to LLM-extracted records."""
+    by_id: dict[str, dict] = {}
+    for formula in formulas:
+        formula_id = formula.get("formula_id")
+        if not isinstance(formula_id, str) or not formula_id:
+            raise ValueError("Every formula must have a non-empty string formula_id")
+        if formula_id in by_id:
+            raise ValueError(f"Duplicate formula_id: {formula_id}")
+        by_id[formula_id] = formula
+
+    for formula_id, formula in by_id.items():
+        formula["item_type"] = "mathematical formula"
+        formula["review_status"] = "unreviewed"
+
+        origin = formula.get("origin")
+        role = formula.get("statement_role")
+        if formula.get("is_adaptation") is True:
+            classification = "adaptation"
+        elif origin == "standard":
+            classification = "standard"
+        elif origin == "cited_source":
+            classification = "cited_result"
+        elif origin == "current_paper" and role in {
+            "headline_result",
+            "supporting_result",
+        }:
+            classification = "paper_result"
+        elif origin == "current_paper":
+            classification = "paper_internal"
+        else:
+            classification = "unknown"
+        formula["classification"] = classification
+        formula["standalone_statement"] = role != "derivation_step"
+        formula["supports_formula_ids"] = []
+
+        occurrences = formula.get("occurrences")
+        primary_occurrence = occurrences[0] if isinstance(occurrences, list) and occurrences else {}
+        equation_number = (
+            primary_occurrence.get("equation_number", "")
+            if isinstance(primary_occurrence, dict)
+            else ""
+        )
+        formula["equation_number"] = equation_number
+        formula["equation_label_raw"] = equation_number
+        formula["is_numbered"] = bool(equation_number)
+
+        dependencies = formula.get("derived_from_formula_ids", [])
+        if not isinstance(dependencies, list):
+            raise ValueError(
+                f"{formula_id}.derived_from_formula_ids must be a JSON array"
+            )
+        clean_dependencies: list[str] = []
+        for dependency_id in dependencies:
+            if (
+                not isinstance(dependency_id, str)
+                or dependency_id == formula_id
+                or dependency_id not in by_id
+            ):
+                formula.setdefault("warnings", []).append(
+                    f"Ignored invalid derived_from_formula_ids entry: {dependency_id!r}"
+                )
+                formula["requires_source_check"] = True
+                continue
+            if dependency_id not in clean_dependencies:
+                clean_dependencies.append(dependency_id)
+        formula["derived_from_formula_ids"] = clean_dependencies
+
+        for symbol in formula.get("symbols", []):
+            if not isinstance(symbol, dict):
+                continue
+            introduced_in = symbol.get("introduced_in_formula_id", "")
+            if introduced_in and introduced_in not in by_id:
+                symbol["introduced_in_formula_id"] = ""
+                formula.setdefault("warnings", []).append(
+                    f"Ignored invalid symbol introduction formula ID: {introduced_in!r}"
+                )
+                formula["requires_source_check"] = True
+
+    for formula_id, formula in by_id.items():
+        for dependency_id in formula["derived_from_formula_ids"]:
+            by_id[dependency_id]["supports_formula_ids"].append(formula_id)
+
+    return formulas
 
 
 def _salvage_partial_json_array(text: str) -> str:
@@ -684,7 +832,7 @@ def extract_formulas_llm(
             "Attempting to salvage partial JSON array."
         )
         content = _salvage_partial_json_array(content)
-    return _extract_json_array(content)
+    return _derive_metadata(_extract_json_array(content))
 
 
 def download_markdown(
