@@ -149,8 +149,8 @@ meets Section 1 must appear in the JSON array. Never output only the first N
 records or a subset intended to illustrate the schema.
 
 If output space is limited, keep every formula record and shorten or omit
-`description`, enrichment fields, and other optional metadata first. Never omit
-a formula record merely to save output space.
+enrichment fields and other optional metadata first. Never omit a formula
+record merely to save output space.
 
 ## 1. Extraction scope
 
@@ -193,13 +193,12 @@ When the same formula occurs more than once:
 
 * create one formula record;
 * include every occurrence in `occurrences`;
-* use the clearest occurrence for `formula_as_found_primary`.
 
 Do not rename variables during deduplication.
 
 ## 4. LaTeX normalization
 
-For `defining_formula`:
+For `latex`:
 
 * preserve the mathematical meaning and original symbols;
 * remove presentation-only commands such as `\displaystyle`;
@@ -209,8 +208,9 @@ For `defining_formula`:
 * do not expand, simplify, rearrange, or algebraically transform the formula;
 * do not silently repair malformed source LaTeX.
 
-If the Markdown appears corrupted, preserve the source text, provide the best
-conservative normalization, add a warning, and set `requires_source_check`.
+Every `occurrences[].latex_as_found` value must preserve the corresponding
+source expression verbatim. If the Markdown appears corrupted, keep `latex`
+conservative and preserve the damaged source exactly in `latex_as_found`.
 
 ## 5. Classification policy
 
@@ -232,24 +232,30 @@ Use the most specific applicable type. Prefer `definition`, `recurrence`,
 `condition`, then `equation`. Use `bound` for an upper or lower estimate and
 `identity` only for a relation asserted for all admissible values.
 
-Record origin independently of the formula's role:
+Use `classification` for origin and novelty:
 
 * `standard`: established mathematical knowledge not attributed here to a
   specific source;
-* `cited_source`: explicitly attributed to earlier work;
-* `current_paper`: introduced, derived, or proved by this paper;
-* `unclear`: insufficient evidence.
+* `cited_result`: explicitly attributed to earlier work;
+* `paper_result`: a headline or independently meaningful supporting result
+  introduced, derived, or proved by this paper;
+* `paper_internal`: a definition, assumption, or derivation step specific to
+  this paper;
+* `adaptation`: an adjusted or specialized form of an established or cited
+  formula;
+* `unknown`: insufficient source evidence.
 
-Set `is_adaptation` to true only for an adjusted or specialized form of an
-established or cited formula. Preserve explicit citation identifiers and
-attribution wording. Do not infer familiarity or attribution from the formula
-alone.
+Preserve explicit citation identifiers and attribution wording. Do not infer
+familiarity or attribution from the formula alone.
 
 Set `established_name` to the established mathematical name explicitly used by
-the paper, such as `"Peano kernel theorem"`. Use an empty string when the paper
-does not supply an established name; do not create a descriptive name for this
-field. The ordinary `label` field may still contain a generated descriptive
-label.
+the paper, such as `"Peano kernel theorem"` or `"Jacobi operator"`. A name may
+refer to the formula itself or to the mathematical object explicitly defined by
+the formula. Do not copy the name of a nearby theorem, lemma, principle, or
+method when it merely justifies, uses, or follows the formula. Use an empty
+string when the paper does not explicitly apply an established name; do not
+create a descriptive name for this field. The ordinary `label` field may still
+contain a generated descriptive label.
 
 Use `statement_role` to describe how the formula functions in the paper:
 
@@ -261,13 +267,13 @@ Use `statement_role` to describe how the formula functions in the paper:
 * `derivation_step`: an intermediate proof or calculation step that is not an
   independently meaningful result.
 
-Use `statement_environment` for an explicit `theorem`, `lemma`, `proposition`,
-or `corollary` environment; otherwise use `none`. A formula's environment does
-not determine its mathematical type or origin.
+Set `standalone_statement` to true for a definition, assumption, headline
+result, or independently meaningful supporting result. Set it to false for an
+intermediate derivation step.
 
 In `derived_from_formula_ids`, record only formulas that are direct premises or
 derivation inputs. Do not link formulas merely because they are nearby, share
-symbols, or discuss the same topic. Python derives reverse support links.
+symbols, or discuss the same topic.
 
 The Markdown may place a source marker immediately before a formula:
 
@@ -277,7 +283,10 @@ For every formula associated with such a marker, copy `source_id` exactly into
 `occurrences[].source_id` and copy `number` exactly into
 `occurrences[].equation_number`. When the marker says `number=unnumbered`, use
 an empty `equation_number`. Do not infer, normalize, or renumber these values.
-For a multi-row equation group, the marker applies to the complete group.
+For a multi-row equation group, the marker applies to the complete group. If
+an individual table or aligned row visibly carries its own explicit
+parenthesized equation label, use that visible row label for the corresponding
+occurrence while retaining the group's `source_id`.
 
 ## 6. Schema
 
@@ -286,17 +295,11 @@ Each array element must have this structure:
 {
   "formula_id": "F0001",
   "label": "concise human-readable label",
-  "defining_formula": "normalized LaTeX",
-  "formula_as_found_primary": "verbatim LaTeX from the clearest occurrence",
-  "description": "precise explanation of the statement and its role",
+  "latex": "normalized LaTeX",
   "formula_type": "definition",
-  "origin": "standard",
-  "is_adaptation": false,
+  "classification": "standard",
   "statement_role": "definition",
-  "statement_environment": "none",
-  "classification_evidence": [
-    "The surrounding text explicitly calls this a standard definition"
-  ],
+  "standalone_statement": true,
   "provenance": {
     "citation_keys": [],
     "attribution_text": ""
@@ -310,37 +313,29 @@ Each array element must have this structure:
       "explicit": true
     }
   ],
-  "symbols": [
+  "symbols_defined": [
     {
       "symbol": "n",
       "represents": "number of mesh intervals",
       "type": "index",
-      "introduced_in_formula_id": "F0001",
       "is_paper_local": false
     }
   ],
   "related_concepts": [
     {
       "label": "Peano kernel",
-      "relation": "uses",
-      "wikidata_qid": "",
-      "dlmf": ""
+      "relation": "uses"
     }
   ],
   "msc_codes_suggested": ["65D32"],
   "occurrences": [
     {
-      "section": "1. Introduction and statement of the results",
-      "context_type": "definition",
       "source_id": "S1.E1",
+      "section": "1. Introduction and statement of the results",
       "equation_number": "(1.1)",
-      "formula_as_found": "verbatim LaTeX at this occurrence",
-      "markdown_locator": "heading and local occurrence index"
+      "latex_as_found": "verbatim LaTeX at this occurrence"
     }
-  ],
-  "source_integrity": "clean",
-  "warnings": [],
-  "requires_source_check": false
+  ]
 }
 
 ## 7. Field constraints
@@ -358,17 +353,14 @@ Each array element must have this structure:
 * `optimization_problem`
 * `condition`
 
-`origin` must be one of:
+`classification` must be one of:
 
 * `standard`
-* `cited_source`
-* `current_paper`
-* `unclear`
-
-`classification_evidence` must contain one or more concise, source-grounded
-observations supporting `origin`, `is_adaptation`, and `statement_role`. Do not
-use unsupported claims such as "this is well known." For `origin: "unclear"`,
-state what evidence is missing.
+* `cited_result`
+* `paper_result`
+* `paper_internal`
+* `adaptation`
+* `unknown`
 
 `provenance.citation_keys` must contain only citation identifiers explicitly
 associated with the formula in the supplied paper. Preserve their source form,
@@ -377,8 +369,6 @@ for example `"12"` or `"Smith2020"`, and use an empty array when none is given.
 `provenance.attribution_text` must preserve the concise source wording that
 attributes the formula, theorem, or result. Use an empty string when there is no
 explicit attribution.
-
-`is_adaptation` must be a JSON boolean.
 
 `established_name` must contain only a name explicitly supported by the paper;
 otherwise use an empty string.
@@ -391,13 +381,8 @@ otherwise use an empty string.
 * `assumption`
 * `derivation_step`
 
-`statement_environment` must be one of:
-
-* `theorem`
-* `lemma`
-* `proposition`
-* `corollary`
-* `none`
+`standalone_statement` must be a JSON boolean and must agree with
+`statement_role`: it is false only for `derivation_step`.
 
 `derived_from_formula_ids` must contain only valid, non-duplicate `formula_id`
 values from the same output array and must not contain the record's own ID.
@@ -409,7 +394,10 @@ equation metadata marker, or an empty string when no marker is present.
 from the associated marker. Use an empty string when the marker says
 `number=unnumbered` or no equation number is present.
 
-`symbol.type` must be one of:
+Only include a symbol in `symbols_defined` when this formula explicitly defines
+or introduces that symbol. Do not list every symbol merely used by the formula.
+
+`symbols_defined[].type` must be one of:
 
 * `variable`
 * `constant`
@@ -420,40 +408,24 @@ from the associated marker. Use an empty string when the marker says
 * `parameter`
 * `functional`
 
-`symbol.introduced_in_formula_id` must contain the `formula_id` of the extracted
-formula that introduces or defines the symbol, including the current record's
-ID when applicable. Use an empty string when the symbol is introduced only in
-prose, is established notation not introduced by this paper, or cannot be
-identified reliably.
-
-`symbol.is_paper_local` must be a JSON boolean. Set it to true only for notation
+`symbols_defined[].is_paper_local` must be a JSON boolean. Set it to true only for notation
 introduced specifically for this paper's argument or construction, and false
 for established mathematical notation and generic bound variables.
-
-`source_integrity` must be one of:
-
-* `clean`
-* `possibly_corrupted`
-* `corrupted`
 
 `conditions` must be an empty array when no conditions are stated or reliably inferred.
 
 `msc_codes_suggested` must be empty when no formula-specific or concept-specific MSC assignment is reasonably supported.
 
-Do not invent DLMF references or Wikidata QIDs. Use empty strings when not known with high confidence.
+`related_concepts` contains only concepts directly relevant to the formula.
+Each entry must contain a concise `label` and a `relation` describing how the
+formula relates to that concept. Use an empty array when no relation is
+supported by the supplied paper.
 
 ## 8. Source fidelity
 
-The fields `formula_as_found_primary` and `occurrences[].formula_as_found` must reproduce the source formula verbatim, including apparent errors.
-
-The normalized field `defining_formula` may correct only unambiguous formatting artifacts. Any correction must be mentioned in `warnings`.
-
-When a formula cannot be reconstructed reliably from the Markdown:
-
-* preserve the damaged source;
-* set `source_integrity` to `possibly_corrupted` or `corrupted`;
-* set `requires_source_check` to true;
-* explain the problem in `warnings`.
+`occurrences[].latex_as_found` must reproduce the source formula verbatim,
+including apparent errors. The normalized `latex` field may correct only
+unambiguous presentation artifacts. Never silently repair mathematical content.
 
 If the paper contains no mathematical formulas, return an empty JSON array: []
 """
@@ -567,90 +539,96 @@ def _extract_json_array(text: str) -> list[dict]:
         raise ValueError(str(first_exc)) from first_exc
 
 
-def _derive_metadata(formulas: list[dict]) -> list[dict]:
-    """Add deterministic fields and reverse links to LLM-extracted records."""
+def _validate_and_clean_formula_records(formulas: list[dict]) -> list[dict]:
+    """Validate references and keep only the compact extraction schema."""
+    cleaned: list[dict] = []
     by_id: dict[str, dict] = {}
-    for formula in formulas:
-        formula_id = formula.get("formula_id")
+
+    for raw in formulas:
+        formula_id = raw.get("formula_id")
         if not isinstance(formula_id, str) or not formula_id:
             raise ValueError("Every formula must have a non-empty string formula_id")
         if formula_id in by_id:
             raise ValueError(f"Duplicate formula_id: {formula_id}")
-        by_id[formula_id] = formula
 
-    for formula_id, formula in by_id.items():
-        formula["item_type"] = "mathematical formula"
-        formula["review_status"] = "unreviewed"
+        provenance = raw.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
 
-        origin = formula.get("origin")
-        role = formula.get("statement_role")
-        if formula.get("is_adaptation") is True:
-            classification = "adaptation"
-        elif origin == "standard":
-            classification = "standard"
-        elif origin == "cited_source":
-            classification = "cited_result"
-        elif origin == "current_paper" and role in {
-            "headline_result",
-            "supporting_result",
-        }:
-            classification = "paper_result"
-        elif origin == "current_paper":
-            classification = "paper_internal"
-        else:
-            classification = "unknown"
-        formula["classification"] = classification
-        formula["standalone_statement"] = role != "derivation_step"
-        formula["supports_formula_ids"] = []
+        occurrences = raw.get("occurrences")
+        if not isinstance(occurrences, list) or not occurrences:
+            raise ValueError(f"{formula_id}.occurrences must be a non-empty JSON array")
 
-        occurrences = formula.get("occurrences")
-        primary_occurrence = occurrences[0] if isinstance(occurrences, list) and occurrences else {}
-        equation_number = (
-            primary_occurrence.get("equation_number", "")
-            if isinstance(primary_occurrence, dict)
-            else ""
-        )
-        formula["equation_number"] = equation_number
-        formula["equation_label_raw"] = equation_number
-        formula["is_numbered"] = bool(equation_number)
+        record = {
+            "formula_id": formula_id,
+            "label": raw.get("label", ""),
+            "latex": raw.get("latex", ""),
+            "formula_type": raw.get("formula_type", "equation"),
+            "classification": raw.get("classification", "unknown"),
+            "statement_role": raw.get("statement_role", "derivation_step"),
+            "standalone_statement": raw.get("standalone_statement", False),
+            "provenance": {
+                "citation_keys": provenance.get("citation_keys", []),
+                "attribution_text": provenance.get("attribution_text", ""),
+            },
+            "established_name": raw.get("established_name", ""),
+            "derived_from_formula_ids": raw.get("derived_from_formula_ids", []),
+            "conditions": raw.get("conditions", []),
+            "symbols_defined": raw.get("symbols_defined", []),
+            "related_concepts": [
+                {
+                    "label": concept.get("label", ""),
+                    "relation": concept.get("relation", ""),
+                }
+                for concept in raw.get("related_concepts", [])
+                if isinstance(concept, dict)
+            ],
+            "msc_codes_suggested": raw.get("msc_codes_suggested", []),
+            "occurrences": [
+                {
+                    "source_id": occurrence.get("source_id", ""),
+                    "section": occurrence.get("section", ""),
+                    "equation_number": occurrence.get("equation_number", ""),
+                    "latex_as_found": occurrence.get("latex_as_found", ""),
+                }
+                for occurrence in occurrences
+                if isinstance(occurrence, dict)
+            ],
+        }
+        if not record["occurrences"]:
+            raise ValueError(f"{formula_id}.occurrences contains no JSON objects")
+        if not isinstance(record["latex"], str) or not record["latex"]:
+            raise ValueError(f"{formula_id}.latex must be a non-empty string")
+        if record["statement_role"] == "derivation_step":
+            record["standalone_statement"] = False
 
-        dependencies = formula.get("derived_from_formula_ids", [])
+        cleaned.append(record)
+        by_id[formula_id] = record
+
+    for formula_id, record in by_id.items():
+        dependencies = record["derived_from_formula_ids"]
         if not isinstance(dependencies, list):
             raise ValueError(
                 f"{formula_id}.derived_from_formula_ids must be a JSON array"
             )
-        clean_dependencies: list[str] = []
+        valid_dependencies: list[str] = []
         for dependency_id in dependencies:
             if (
                 not isinstance(dependency_id, str)
                 or dependency_id == formula_id
                 or dependency_id not in by_id
             ):
-                formula.setdefault("warnings", []).append(
-                    f"Ignored invalid derived_from_formula_ids entry: {dependency_id!r}"
+                log.warning(
+                    "Ignoring invalid %s.derived_from_formula_ids entry: %r",
+                    formula_id,
+                    dependency_id,
                 )
-                formula["requires_source_check"] = True
                 continue
-            if dependency_id not in clean_dependencies:
-                clean_dependencies.append(dependency_id)
-        formula["derived_from_formula_ids"] = clean_dependencies
+            if dependency_id not in valid_dependencies:
+                valid_dependencies.append(dependency_id)
+        record["derived_from_formula_ids"] = valid_dependencies
 
-        for symbol in formula.get("symbols", []):
-            if not isinstance(symbol, dict):
-                continue
-            introduced_in = symbol.get("introduced_in_formula_id", "")
-            if introduced_in and introduced_in not in by_id:
-                symbol["introduced_in_formula_id"] = ""
-                formula.setdefault("warnings", []).append(
-                    f"Ignored invalid symbol introduction formula ID: {introduced_in!r}"
-                )
-                formula["requires_source_check"] = True
-
-    for formula_id, formula in by_id.items():
-        for dependency_id in formula["derived_from_formula_ids"]:
-            by_id[dependency_id]["supports_formula_ids"].append(formula_id)
-
-    return formulas
+    return cleaned
 
 
 def _salvage_partial_json_array(text: str) -> str:
@@ -832,7 +810,7 @@ def extract_formulas_llm(
             "Attempting to salvage partial JSON array."
         )
         content = _salvage_partial_json_array(content)
-    return _derive_metadata(_extract_json_array(content))
+    return _validate_and_clean_formula_records(_extract_json_array(content))
 
 
 def download_markdown(
