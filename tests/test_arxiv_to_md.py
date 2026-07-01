@@ -17,6 +17,36 @@ MINIMAL_HTML = """
 </body></html>
 """
 
+STRUCTURED_HTML = """
+<html><body><article>
+<div>arXiv:2606.25586v1</div>
+<h1 class="ltx_title ltx_title_document">A Mathematical Paper</h1>
+<div class="ltx_authors">
+  <span class="ltx_creator ltx_role_author">
+    <span class="ltx_personname">Ada Lovelace</span>
+    <span class="ltx_contact ltx_role_address">Analytical Engine Institute</span>
+    <span class="ltx_contact ltx_role_email">ada@example.org</span>
+  </span>
+</div>
+<div class="ltx_abstract"><h6 class="ltx_title ltx_title_abstract">Abstract.</h6><p>Main result.</p></div>
+<p><span class="ltx_text ltx_font_bold">Keywords and Phrases:</span> analysis, quadrature.</p>
+<p><span class="ltx_text ltx_font_bold">Mathematics Subject Classification 2020:</span> 41A55, 65D30.</p>
+</article></body></html>
+"""
+
+COMBINED_AUTHORS_HTML = """
+<html><body><article>
+<div>References include arXiv:1111.22222.</div>
+<h1 class="ltx_title ltx_title_document">Combined Authors</h1>
+<div class="ltx_authors"><span class="ltx_creator ltx_role_author">
+<span class="ltx_personname">
+Zirui Deng<sup>1</sup> Jingbo Sun<sup>1</sup> and Fei Wang<sup>1,∗</sup>
+<br/><sup>1</sup><span>School of Mathematics<br/><sup>∗</sup>Correspondence: fei@example.org</span>
+</span>
+</span></div>
+</article></body></html>
+"""
+
 
 def test_inline_math_replaced():
     md = _convert_html(MINIMAL_HTML)
@@ -56,6 +86,48 @@ def test_equation_group_keeps_number_source_id_and_rows():
 def test_no_cid_artifacts():
     md = _convert_html(MINIMAL_HTML)
     assert "(cid:" not in md
+
+
+def test_structured_document_metadata_and_headings():
+    md = _convert_html(STRUCTURED_HTML)
+    assert md.startswith("---\n")
+    assert 'arxiv_id: "2606.25586v1"' in md
+    assert 'title: "A Mathematical Paper"' in md
+    assert '  - name: "Ada Lovelace"' in md
+    assert '    affiliation: "Analytical Engine Institute"' in md
+    assert '    email: "ada@example.org"' in md
+    assert '  - "analysis"' in md
+    assert '  - "quadrature"' in md
+    assert '  - "41A55"' in md
+    assert "# A Mathematical Paper" in md
+    assert "## Authors" in md
+    assert "## Abstract" in md
+    assert "## Keywords" in md
+    assert "## Mathematics Subject Classification 2020" in md
+
+
+def test_missing_document_metadata_uses_explicit_empty_values():
+    md = _convert_html(MINIMAL_HTML, arxiv_id="2606.28184")
+    assert 'arxiv_id: "2606.28184"' in md
+    assert 'title: ""' in md
+    assert "authors: []" in md
+    assert "keywords: []" in md
+    assert "msc_2020: []" in md
+
+
+def test_requested_arxiv_id_wins_over_ids_mentioned_in_document():
+    md = _convert_html(COMBINED_AUTHORS_HTML, arxiv_id="2606.29440")
+    assert 'arxiv_id: "2606.29440"' in md
+    assert 'arxiv_id: "1111.22222"' not in md
+
+
+def test_combined_author_layout_is_split_into_people():
+    md = _convert_html(COMBINED_AUTHORS_HTML, arxiv_id="2606.29440")
+    assert '  - name: "Zirui Deng"' in md
+    assert '  - name: "Jingbo Sun"' in md
+    assert '  - name: "Fei Wang"' in md
+    assert md.count('affiliation: "School of Mathematics"') == 3
+    assert '    email: "fei@example.org"' in md
 
 
 def test_fetch_and_convert_calls_arxiv_html5():
