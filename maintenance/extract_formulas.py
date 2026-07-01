@@ -24,6 +24,8 @@ Environment variables:
     OPENROUTER_PROVIDER    comma-separated provider slug order to pin to, no fallback
                             (e.g. "cloudflare,novita"; case-insensitive); default lets
                             OpenRouter choose
+    OPENROUTER_REASONING_TOKENS  cap on hidden reasoning tokens sent to OpenRouter
+                            (default: 8000)
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ import logging
 import os
 import re
 import sys
+import time
 
 import lakefs
 import requests
@@ -55,6 +58,13 @@ _MODEL = "z-ai/glm-4.7-flash"
 # that observed range; OpenRouter/the provider will still apply their own true ceiling
 # if it's lower than this.
 _MAX_COMPLETION_TOKENS = 131072
+# Cap on hidden reasoning tokens. Too low starves reasoning-heavy models of planning
+# room (observed: grok-4.3 stopped after 2 formulas using only 722 of an available
+# 2000); too high lets a model burn its whole completion budget "thinking" and leave
+# nothing for the actual JSON (observed: glm-4.7-flash on DeepInfra spent 14374 of a
+# 16384-token hard cap on reasoning). 8000 is a higher default to test against grok-style
+# under-extraction; tune per model via OPENROUTER_REASONING_TOKENS.
+_REASONING_MAX_TOKENS = 8000
 
 
 def list_lakefs_papers(
@@ -543,27 +553,38 @@ def _log_generation_stats(generation_id: str, api_key: str) -> None:
     Surfaces which upstream provider actually served the request and its native
     token breakdown (completion vs. reasoning) — the data needed to diagnose
     provider-specific output caps like the one hit on DeepInfra for glm-4.7-flash.
+
+    The stats record isn't immediately queryable right after the chat completion
+    response comes back (eventual consistency on OpenRouter's side, undocumented
+    delay), so a 404 on the first attempt is expected and retried with backoff
+    rather than treated as a real failure.
     """
-    try:
-        resp = requests.get(
-            "https://openrouter.ai/api/v1/generation",
-            params={"id": generation_id},
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        stats = resp.json().get("data", {})
-        log.info(
-            "Generation stats: provider=%s native_completion=%s native_reasoning=%s "
-            "finish_reason=%s cost=$%s",
-            stats.get("provider_name"),
-            stats.get("native_tokens_completion"),
-            stats.get("native_tokens_reasoning"),
-            stats.get("native_finish_reason"),
-            stats.get("usage"),
-        )
-    except (requests.RequestException, ValueError) as exc:
-        log.warning("Could not fetch generation stats for %s: %s", generation_id, exc)
+    last_exc: Exception | None = None
+    for attempt, delay in enumerate((0, 2, 5, 10, 15)):
+        if delay:
+            time.sleep(delay)
+        try:
+            resp = requests.get(
+                "https://openrouter.ai/api/v1/generation",
+                params={"id": generation_id},
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            stats = resp.json().get("data", {})
+            log.info(
+                "Generation stats: provider=%s native_completion=%s native_reasoning=%s "
+                "finish_reason=%s cost=$%s",
+                stats.get("provider_name"),
+                stats.get("native_tokens_completion"),
+                stats.get("native_tokens_reasoning"),
+                stats.get("native_finish_reason"),
+                stats.get("usage"),
+            )
+            return
+        except (requests.RequestException, ValueError) as exc:
+            last_exc = exc
+    log.warning("Could not fetch generation stats for %s: %s", generation_id, last_exc)
 
 
 def extract_formulas_llm(
@@ -572,13 +593,23 @@ def extract_formulas_llm(
     model: str = _MODEL,
     max_tokens: int = _MAX_COMPLETION_TOKENS,
     providers: list[str] | None = None,
+    reasoning_max_tokens: int = _REASONING_MAX_TOKENS,
 ) -> list[dict]:
     """Send *markdown* to OpenRouter and return extracted formulas as a list of dicts.
 
     *providers*, if given, pins the OpenRouter request to that ordered list of
-    upstream providers (e.g. ["Cloudflare", "NovitaAI"]) with no fallback to
+    upstream providers (e.g. ["cloudflare", "novita"]) with no fallback to
     others — useful since the same model can have very different completion
     token caps and reasoning-token behavior depending on which provider serves it.
+
+    *reasoning_max_tokens* caps hidden reasoning so reasoning-capable models don't
+    spend their whole completion budget "thinking" and leave nothing for the actual
+    JSON array (observed with z-ai/glm-4.7-flash: 14374 of a 16384-token provider cap
+    went to reasoning, leaving an empty `content` field) — but too low a cap can
+    instead starve a model of planning room and cause early, sparse extraction
+    (observed with x-ai/grok-4.3: stopped after 2 formulas using only a fraction of
+    a 2000-token reasoning budget). Providers that don't support reasoning controls
+    ignore this field.
 
     Raises ValueError if the response cannot be parsed as a JSON array.
     """
@@ -590,12 +621,7 @@ def extract_formulas_llm(
         ],
         "temperature": 0.1,
         "max_tokens": max_tokens,
-        # Cap hidden reasoning so reasoning-capable models don't spend their whole
-        # completion budget "thinking" and leave nothing for the actual JSON array
-        # (observed with z-ai/glm-4.7-flash: 14374 of a 16384-token provider cap went
-        # to reasoning, leaving an empty `content` field). Providers that don't support
-        # reasoning controls ignore this field.
-        "reasoning": {"max_tokens": 2000},
+        "reasoning": {"max_tokens": reasoning_max_tokens},
     }
     if providers:
         # OpenRouter's provider.order expects lowercase provider slugs (e.g.
@@ -630,6 +656,14 @@ def extract_formulas_llm(
         raise ValueError(f"{exc}. Response body: {resp.text[:2000]}") from exc
     try:
         data = resp.json()
+    except json.JSONDecodeError as exc:
+        snippet_start = max(0, exc.pos - 300)
+        raise ValueError(
+            f"OpenRouter response body is not valid JSON ({exc}). This usually means the "
+            "response came back as SSE/streamed chunks or was cut off mid-transfer rather "
+            f"than a single JSON object. Body around the failure: {resp.text[snippet_start:exc.pos + 300]!r}"
+        ) from exc
+    try:
         choice = data["choices"][0]
         content = choice["message"]["content"]
         finish_reason = choice.get("finish_reason", "")
@@ -717,6 +751,9 @@ def main() -> None:
     openrouter_providers = [
         p.strip() for p in os.environ.get("OPENROUTER_PROVIDER", "").split(",") if p.strip()
     ]
+    openrouter_reasoning_tokens = int(
+        os.environ.get("OPENROUTER_REASONING_TOKENS", str(_REASONING_MAX_TOKENS)).strip()
+    )
 
     for name, val in [("LAKEFS_USER", lakefs_user), ("LAKEFS_PASSWORD", lakefs_password)]:
         if not val:
@@ -762,7 +799,12 @@ def main() -> None:
     log.info("Sending to %s via OpenRouter…", openrouter_model)
     try:
         formulas = extract_formulas_llm(
-            markdown, openrouter_key, openrouter_model, openrouter_max_tokens, openrouter_providers
+            markdown,
+            openrouter_key,
+            openrouter_model,
+            openrouter_max_tokens,
+            openrouter_providers,
+            openrouter_reasoning_tokens,
         )
     except (ValueError, requests.RequestException) as exc:
         sys.exit(f"LLM extraction failed: {exc}")
