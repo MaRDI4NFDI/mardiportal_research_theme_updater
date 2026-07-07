@@ -26,6 +26,23 @@ Environment variables:
                             OpenRouter choose
     OPENROUTER_REASONING_TOKENS  cap on hidden reasoning tokens sent to OpenRouter
                             (default: 8000)
+
+    OLLAMA_URL          base URL of an OpenAI-compatible Ollama/LiteLLM proxy, e.g.
+                            "https://tllm.science-berlin.de" ("/chat/completions" is
+                            appended automatically). When OLLAMA_MODEL is set, this
+                            backend is used instead of OpenRouter.
+    OLLAMA_API_TOKEN    bearer token for OLLAMA_URL
+    OLLAMA_MODEL        model id to request from OLLAMA_URL, e.g. "zib/gpt-oss-20b".
+                            Setting this switches the script from OpenRouter to the
+                            Ollama/LiteLLM backend.
+    OLLAMA_MAX_TOKENS   completion token cap sent to OLLAMA_URL (default: 20000).
+                            Kept separate from OPENROUTER_MAX_TOKENS because
+                            self-hosted deployments often have a much smaller total
+                            context window (input + output combined) than OpenRouter.
+    OLLAMA_DISABLE_THINKING  send chat_template_kwargs.enable_thinking=false to
+                            suppress hidden reasoning on Qwen3-style "thinking"
+                            models (default: true; set to "false" to keep thinking
+                            enabled). Only applies to the Ollama/LiteLLM backend.
 """
 from __future__ import annotations
 
@@ -58,6 +75,10 @@ _MODEL = "z-ai/glm-4.7-flash"
 # that observed range; OpenRouter/the provider will still apply their own true ceiling
 # if it's lower than this.
 _MAX_COMPLETION_TOKENS = 131072
+# Self-hosted Ollama/LiteLLM deployments have been observed with a much smaller total
+# context window than OpenRouter (e.g. 65536 tokens for input + output combined on
+# zib/qwen3.6-35b-a3b) — 131072 alone exceeds that, so a much lower default is used.
+_OLLAMA_MAX_COMPLETION_TOKENS = 20000
 # Cap on hidden reasoning tokens. Too low starves reasoning-heavy models of planning
 # room (observed: grok-4.3 stopped after 2 formulas using only 722 of an available
 # 2000); too high lets a model burn its whole completion budget "thinking" and leave
@@ -720,13 +741,32 @@ def extract_formulas_llm(
     max_tokens: int = _MAX_COMPLETION_TOKENS,
     providers: list[str] | None = None,
     reasoning_max_tokens: int = _REASONING_MAX_TOKENS,
+    base_url: str = _OPENROUTER_URL,
+    disable_thinking: bool = False,
 ) -> list[dict]:
-    """Send *markdown* to OpenRouter and return extracted formulas as a list of dicts.
+    """Send *markdown* to an OpenAI-compatible chat-completions endpoint and return
+    extracted formulas as a list of dicts.
+
+    *base_url* defaults to OpenRouter. Passing a different endpoint (e.g. an
+    Ollama/LiteLLM proxy's "/chat/completions") skips the OpenRouter-only
+    "provider" pinning, "reasoning" budget, and post-hoc generation-stats lookup,
+    since those are OpenRouter-specific extensions not understood by other
+    OpenAI-compatible servers.
+
+    *disable_thinking*, when true, sends `chat_template_kwargs: {"enable_thinking":
+    false}` — the vLLM/Qwen3 convention for turning off hidden reasoning. On a
+    self-hosted model with a small total context window (input + output combined,
+    e.g. 65536 tokens), a "thinking" model otherwise spends the whole completion
+    budget on invisible reasoning and returns empty content for anything but a
+    trivial paper (observed with zib/qwen3.6-35b-a3b: a ~28k-token prompt left no
+    room for both reasoning and the JSON array). Unknown/non-reasoning backends
+    are expected to ignore this field.
 
     *providers*, if given, pins the OpenRouter request to that ordered list of
     upstream providers (e.g. ["cloudflare", "novita"]) with no fallback to
     others — useful since the same model can have very different completion
     token caps and reasoning-token behavior depending on which provider serves it.
+    Ignored when *base_url* is not OpenRouter.
 
     *reasoning_max_tokens* caps hidden reasoning so reasoning-capable models don't
     spend their whole completion budget "thinking" and leave nothing for the actual
@@ -735,10 +775,11 @@ def extract_formulas_llm(
     instead starve a model of planning room and cause early, sparse extraction
     (observed with x-ai/grok-4.3: stopped after 2 formulas using only a fraction of
     a 2000-token reasoning budget). Providers that don't support reasoning controls
-    ignore this field.
+    ignore this field. Ignored when *base_url* is not OpenRouter.
 
     Raises ValueError if the response cannot be parsed as a JSON array.
     """
+    is_openrouter = base_url.rstrip("/") == _OPENROUTER_URL.rstrip("/")
     payload = {
         "model": model,
         "messages": [
@@ -747,28 +788,31 @@ def extract_formulas_llm(
         ],
         "temperature": 0.1,
         "max_tokens": max_tokens,
-        "reasoning": {"max_tokens": reasoning_max_tokens},
     }
-    if providers:
-        # OpenRouter's provider.order expects lowercase provider slugs (e.g.
-        # "cloudflare", "deepinfra"), not the capitalized display names shown on the
-        # pricing page ("Cloudflare", "DeepInfra") — passing the display name matches
-        # no provider and looks identical to "this provider has no live endpoint"
-        # (404 "No endpoints found"). Normalize defensively so either form works.
-        #
-        # allow_fallbacks=False: hard pin to this provider list, no silent fallback.
-        # With fallback allowed, OpenRouter routed straight to DeepInfra and ignored
-        # the preference entirely whenever a listed provider had no live endpoint —
-        # giving no error and no signal that the pin had no effect. Failing loudly
-        # is more useful than silently getting the wrong provider's much smaller
-        # output cap.
-        payload["provider"] = {
-            "order": [p.lower() for p in providers],
-            "allow_fallbacks": False,
-        }
-    log.info("Requesting model=%s provider=%s", model, payload.get("provider"))
+    if is_openrouter:
+        payload["reasoning"] = {"max_tokens": reasoning_max_tokens}
+        if providers:
+            # OpenRouter's provider.order expects lowercase provider slugs (e.g.
+            # "cloudflare", "deepinfra"), not the capitalized display names shown on the
+            # pricing page ("Cloudflare", "DeepInfra") — passing the display name matches
+            # no provider and looks identical to "this provider has no live endpoint"
+            # (404 "No endpoints found"). Normalize defensively so either form works.
+            #
+            # allow_fallbacks=False: hard pin to this provider list, no silent fallback.
+            # With fallback allowed, OpenRouter routed straight to DeepInfra and ignored
+            # the preference entirely whenever a listed provider had no live endpoint —
+            # giving no error and no signal that the pin had no effect. Failing loudly
+            # is more useful than silently getting the wrong provider's much smaller
+            # output cap.
+            payload["provider"] = {
+                "order": [p.lower() for p in providers],
+                "allow_fallbacks": False,
+            }
+    if disable_thinking:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    log.info("Requesting model=%s base_url=%s provider=%s", model, base_url, payload.get("provider"))
     resp = requests.post(
-        _OPENROUTER_URL,
+        base_url,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -796,7 +840,7 @@ def extract_formulas_llm(
     except (KeyError, IndexError) as exc:
         raise ValueError(f"Unexpected OpenRouter response structure: {exc}") from exc
     generation_id = data.get("id")
-    if generation_id:
+    if is_openrouter and generation_id:
         _log_generation_stats(generation_id, api_key)
     if not content:
         raise ValueError(
@@ -880,10 +924,37 @@ def main() -> None:
     openrouter_reasoning_tokens = int(
         os.environ.get("OPENROUTER_REASONING_TOKENS", str(_REASONING_MAX_TOKENS)).strip()
     )
+    ollama_url = os.environ.get("OLLAMA_URL", "").strip()
+    ollama_token = os.environ.get("OLLAMA_API_TOKEN", "").strip()
+    ollama_model = os.environ.get("OLLAMA_MODEL", "").strip()
+    ollama_max_tokens = int(
+        os.environ.get("OLLAMA_MAX_TOKENS", str(_OLLAMA_MAX_COMPLETION_TOKENS)).strip()
+    )
+    ollama_disable_thinking = os.environ.get("OLLAMA_DISABLE_THINKING", "true").strip().lower() not in (
+        "0",
+        "false",
+        "",
+    )
 
     for name, val in [("LAKEFS_USER", lakefs_user), ("LAKEFS_PASSWORD", lakefs_password)]:
         if not val:
             sys.exit(f"Missing environment variable: {name}")
+
+    # OLLAMA_MODEL set -> use the Ollama/LiteLLM backend instead of OpenRouter.
+    use_ollama = bool(ollama_model)
+    if use_ollama:
+        for name, val in [("OLLAMA_URL", ollama_url), ("OLLAMA_API_TOKEN", ollama_token)]:
+            if not val:
+                sys.exit(f"Missing environment variable: {name} (required when OLLAMA_MODEL is set)")
+        llm_base_url = ollama_url.rstrip("/") + "/chat/completions"
+        llm_api_key = ollama_token
+        llm_model = ollama_model
+        llm_max_tokens = ollama_max_tokens
+    else:
+        llm_base_url = _OPENROUTER_URL
+        llm_api_key = openrouter_key
+        llm_model = openrouter_model
+        llm_max_tokens = openrouter_max_tokens
 
     if not args.qid:
         # --- List mode: scan lakeFS, fetch titles, display table ---
@@ -905,7 +976,7 @@ def main() -> None:
     target = args.qid.upper()
     session = requests.Session()
 
-    if not openrouter_key:
+    if not use_ollama and not openrouter_key:
         sys.exit("Missing environment variable: OPENROUTER_API_KEY")
 
     # --- Stage 5: download Markdown ---
@@ -922,22 +993,24 @@ def main() -> None:
     log.info("Saved fulltext to %s", fulltext_path)
 
     # --- Stage 6: call LLM ---
-    log.info("Sending to %s via OpenRouter…", openrouter_model)
+    log.info("Sending to %s via %s…", llm_model, "Ollama/LiteLLM" if use_ollama else "OpenRouter")
     try:
         formulas = extract_formulas_llm(
             markdown,
-            openrouter_key,
-            openrouter_model,
-            openrouter_max_tokens,
+            llm_api_key,
+            llm_model,
+            llm_max_tokens,
             openrouter_providers,
             openrouter_reasoning_tokens,
+            base_url=llm_base_url,
+            disable_thinking=use_ollama and ollama_disable_thinking,
         )
     except (ValueError, requests.RequestException) as exc:
         sys.exit(f"LLM extraction failed: {exc}")
     log.info("Extracted %d formula(s)", len(formulas))
 
     # --- Stage 7: save output ---
-    out_path = _output_path(target, openrouter_model)
+    out_path = _output_path(target, llm_model)
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(formulas, fh, indent=2, ensure_ascii=False)
     print(f"Wrote {len(formulas)} formula(s) to {out_path}")
