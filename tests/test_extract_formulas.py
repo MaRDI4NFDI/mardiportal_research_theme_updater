@@ -207,3 +207,47 @@ def test_preflight_check_native_raises_when_over_budget():
 
     with pytest.raises(ValueError, match="num_ctx"):
         preflight_check_native(markdown, num_ctx=512)
+
+
+def test_resolve_route_native_ollama():
+    from maintenance.extract_formulas import Backend, resolve_route
+
+    route = resolve_route(
+        ollama_model="qwen3.5:35b",
+        ollama_url="https://ollama.zib.de/ollama/api",
+        ollama_token="sk-fake",
+        ollama_api_style="native",
+        ollama_num_ctx=100000,
+        openrouter_model="",
+        openrouter_key="",
+        openrouter_max_tokens=131072,
+        openrouter_providers=[],
+        openrouter_reasoning_tokens=8000,
+    )
+
+    assert route.backend == Backend.OLLAMA_NATIVE
+    assert route.base_url == "https://ollama.zib.de/ollama/api/chat"
+    assert route.model == "qwen3.5:35b"
+    assert route.num_ctx == 100000
+
+
+def test_resolve_route_defaults_to_openai_style():
+    from maintenance.extract_formulas import Backend, resolve_route
+
+    with patch("maintenance.extract_formulas._is_vllm_backed", return_value=False):
+        route = resolve_route(
+            ollama_model="zib/gpt-oss-20b",
+            ollama_url="https://tllm.science-berlin.de",
+            ollama_token="sk-fake",
+            ollama_api_style="openai",
+            ollama_num_ctx=32768,
+            openrouter_model="",
+            openrouter_key="",
+            openrouter_max_tokens=131072,
+            openrouter_providers=[],
+            openrouter_reasoning_tokens=8000,
+        )
+
+    assert route.backend == Backend.OLLAMA_OTHER
+    assert route.base_url == "https://tllm.science-berlin.de/chat/completions"
+    assert route.num_ctx is None

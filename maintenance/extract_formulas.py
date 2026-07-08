@@ -1433,6 +1433,8 @@ def resolve_route(
     ollama_model: str,
     ollama_url: str,
     ollama_token: str,
+    ollama_api_style: str = "openai",
+    ollama_num_ctx: int = 32768,
     openrouter_model: str,
     openrouter_key: str,
     openrouter_max_tokens: int,
@@ -1442,17 +1444,28 @@ def resolve_route(
     """Decide which backend/route this run should use — the single place that
     answers "which route to take," so nothing downstream has to re-derive it.
 
-    Precedence: `ollama_model` set -> Ollama/LiteLLM backend (requires
-    `ollama_url` and `ollama_token`; vLLM-vs-not is determined once here via
-    `_is_vllm_backed`, a single `/model/info` lookup, cached for the process).
-    Otherwise `openrouter_model` set -> OpenRouter backend (requires
-    `openrouter_key`). Neither set is an error: a model must be chosen
-    explicitly, there is no implicit default backend or model.
+    Precedence: `ollama_model` set -> Ollama backend (requires `ollama_url`
+    and `ollama_token`). `ollama_api_style` then picks *how* to talk to it:
+    `"native"` -> `Backend.OLLAMA_NATIVE`, talking to `{ollama_url}/chat` in
+    Ollama's own request/response shape with an explicit `num_ctx` (for
+    deployments — e.g. plain Open WebUI — that have no LiteLLM-compatible
+    `/model/info`/`/utils/token_counter` and were observed to silently
+    truncate prompts on the OpenAI-compatible route instead of honoring
+    `num_ctx` there). Any other value (default `"openai"`) preserves the
+    existing behavior: vLLM-vs-not is determined once via `_is_vllm_backed`,
+    a single `/model/info` lookup, cached for the process. Otherwise
+    `openrouter_model` set -> OpenRouter backend (requires `openrouter_key`).
+    Neither set is an error: a model must be chosen explicitly, there is no
+    implicit default backend or model.
 
     Args:
         ollama_model: `OLLAMA_MODEL` env var.
         ollama_url: `OLLAMA_URL` env var.
         ollama_token: `OLLAMA_API_TOKEN` env var.
+        ollama_api_style: `OLLAMA_API_STYLE` env var (`"openai"` or
+            `"native"`). Ignored unless `ollama_model` is set.
+        ollama_num_ctx: Parsed `OLLAMA_NUM_CTX` value. Only used when
+            `ollama_api_style == "native"`.
         openrouter_model: `OPENROUTER_MODEL` env var.
         openrouter_key: `OPENROUTER_API_KEY` env var.
         openrouter_max_tokens: Parsed `OPENROUTER_MAX_TOKENS` value.
@@ -1460,8 +1473,8 @@ def resolve_route(
         openrouter_reasoning_tokens: Parsed `OPENROUTER_REASONING_TOKENS` value.
 
     Returns:
-        The resolved `Route`: `Backend.OLLAMA_VLLM` or `Backend.OLLAMA_OTHER`
-        for the Ollama/LiteLLM backend, or `Backend.OPENROUTER`.
+        The resolved `Route`: `Backend.OLLAMA_NATIVE`, `Backend.OLLAMA_VLLM`,
+        or `Backend.OLLAMA_OTHER` for the Ollama backend, or `Backend.OPENROUTER`.
 
     Raises:
         ValueError: If neither `ollama_model` nor `openrouter_model` is set, or
@@ -1472,6 +1485,15 @@ def resolve_route(
         if not ollama_url or not ollama_token:
             raise ValueError(
                 "OLLAMA_URL and OLLAMA_API_TOKEN are required when OLLAMA_MODEL is set."
+            )
+        if ollama_api_style == "native":
+            return Route(
+                backend=Backend.OLLAMA_NATIVE,
+                base_url=ollama_url.rstrip("/") + "/chat",
+                api_key=ollama_token,
+                model=ollama_model,
+                api_root=ollama_url,
+                num_ctx=ollama_num_ctx,
             )
         backend = (
             Backend.OLLAMA_VLLM
