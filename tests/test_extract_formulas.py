@@ -171,6 +171,130 @@ def test_extract_formulas_llm_raises_on_bad_json():
             extract_formulas_llm("# Paper\n\n$$x$$\n", "fake-key")
 
 
+def test_extract_formulas_llm_native_parses_response():
+    from maintenance.extract_formulas import extract_formulas_llm
+
+    formula_obj = {
+        "formula_id": "F0001",
+        "label": "Mass-energy equivalence",
+        "latex": "E = mc^2",
+        "formula_type": "equation",
+        "classification": "standard",
+        "statement_role": "headline_result",
+        "standalone_statement": True,
+        "provenance": {"citation_keys": [], "attribution_text": ""},
+        "established_name": "",
+        "derived_from_formula_ids": [],
+        "conditions": [],
+        "symbols_defined": [],
+        "related_concepts": [],
+        "msc_codes_suggested": [],
+        "occurrences": [
+            {"source_id": "", "section": "Introduction", "equation_number": "", "latex_as_found": "E = mc^2"}
+        ],
+    }
+
+    fake_native_response = {
+        "message": {"content": json.dumps([formula_obj])},
+        "done_reason": "stop",
+        "prompt_eval_count": 100,
+        "eval_count": 50,
+    }
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.json.return_value = fake_native_response
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        result = extract_formulas_llm(
+            "# Paper\n\n$$E = mc^2$$\n",
+            "fake-key",
+            model="qwen3.5:35b",
+            base_url="https://ollama.zib.de/ollama/api/chat",
+            api_style="native",
+            num_ctx=32768,
+        )
+
+    assert len(result) == 1
+    assert result[0]["formula_id"] == "F0001"
+
+    sent_payload = mock_post.call_args.kwargs["json"]
+    assert sent_payload["options"]["num_ctx"] == 32768
+    assert sent_payload["stream"] is False
+    assert "max_tokens" not in sent_payload
+
+
+def test_extract_formulas_llm_native_raises_on_empty_content():
+    from maintenance.extract_formulas import extract_formulas_llm
+
+    fake_native_response = {
+        "message": {"content": ""},
+        "done_reason": "stop",
+        "prompt_eval_count": 8000,
+        "eval_count": 0,
+    }
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.json.return_value = fake_native_response
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        with pytest.raises(ValueError, match="no completion content"):
+            extract_formulas_llm(
+                "# Paper\n\n$$x$$\n",
+                "fake-key",
+                model="qwen3.5:35b",
+                base_url="https://ollama.zib.de/ollama/api/chat",
+                api_style="native",
+                num_ctx=32768,
+            )
+
+
+def test_extract_formulas_llm_native_salvages_truncated_response():
+    from maintenance.extract_formulas import extract_formulas_llm
+
+    valid_record = {
+        "formula_id": "F0001",
+        "label": "x",
+        "latex": "x = 1",
+        "formula_type": "equation",
+        "classification": "standard",
+        "statement_role": "headline_result",
+        "standalone_statement": True,
+        "provenance": {"citation_keys": [], "attribution_text": ""},
+        "established_name": "",
+        "derived_from_formula_ids": [],
+        "conditions": [],
+        "symbols_defined": [],
+        "related_concepts": [],
+        "msc_codes_suggested": [],
+        "occurrences": [{"source_id": "", "section": "", "equation_number": "", "latex_as_found": "x = 1"}],
+    }
+    # Truncated mid-second-record: valid JSON up to the first complete object.
+    truncated_content = "[" + json.dumps(valid_record) + ',{"formula_id": "F0002", "lat'
+
+    fake_native_response = {
+        "message": {"content": truncated_content},
+        "done_reason": "length",
+        "prompt_eval_count": 8000,
+        "eval_count": 32768,
+    }
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.json.return_value = fake_native_response
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        result = extract_formulas_llm(
+            "# Paper\n\n$$x$$\n",
+            "fake-key",
+            model="qwen3.5:35b",
+            base_url="https://ollama.zib.de/ollama/api/chat",
+            api_style="native",
+            num_ctx=32768,
+        )
+
+    assert len(result) == 1
+    assert result[0]["formula_id"] == "F0001"
+
+
 def test_backend_has_native_member():
     from maintenance.extract_formulas import Backend
 

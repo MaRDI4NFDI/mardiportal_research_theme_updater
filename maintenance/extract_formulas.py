@@ -1225,9 +1225,23 @@ def extract_formulas_llm(
     reasoning_max_tokens: int = _REASONING_MAX_TOKENS,
     base_url: str = _OPENROUTER_URL,
     reasoning_control: dict | None = None,
+    api_style: str = "openai",
+    num_ctx: int | None = None,
 ) -> list[dict]:
-    """Send *markdown* to an OpenAI-compatible chat-completions endpoint and return
-    extracted formulas as a list of dicts.
+    """Send *markdown* to a chat-completions endpoint and return extracted
+    formulas as a list of dicts.
+
+    *api_style* selects the wire format: `"openai"` (default) sends an
+    OpenAI-compatible request and reads `choices[0].message.content` — this
+    covers OpenRouter and any LiteLLM/vLLM-fronted Ollama deployment.
+    `"native"` instead sends Ollama's own `/api/chat` request shape
+    (`stream: false`, `options.num_ctx`) and reads `message.content` /
+    `done_reason` from the response — needed for a plain Ollama/Open WebUI
+    deployment that has no OpenAI-compatible layer respecting `num_ctx` (see
+    `preflight_check_native`). *num_ctx* is required when *api_style* is
+    `"native"`; all *api_style="openai"*-only parameters (*max_tokens*,
+    *providers*, *reasoning_max_tokens*, *reasoning_control*) are ignored in
+    that case.
 
     *base_url* defaults to OpenRouter. Passing a different endpoint (e.g. an
     Ollama/LiteLLM proxy's "/chat/completions") skips the OpenRouter-only
@@ -1259,8 +1273,51 @@ def extract_formulas_llm(
     a 2000-token reasoning budget). Providers that don't support reasoning controls
     ignore this field. Ignored when *base_url* is not OpenRouter.
 
-    Raises ValueError if the response cannot be parsed as a JSON array.
+    Raises ValueError if the response cannot be parsed as a JSON array, or
+    (native style) if the model returns no completion content.
     """
+    if api_style == "native":
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": markdown},
+            ],
+            "stream": False,
+            "options": {"num_ctx": num_ctx, "temperature": 0.1},
+        }
+        log.info("Requesting model=%s base_url=%s (native) num_ctx=%s", model, base_url, num_ctx)
+        resp = requests.post(
+            base_url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=600,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("message", {}).get("content", "")
+        done_reason = data.get("done_reason", "")
+        log.info(
+            "Native response: prompt_tokens=%s completion_tokens=%s done_reason=%s",
+            data.get("prompt_eval_count"),
+            data.get("eval_count"),
+            done_reason,
+        )
+        if not content:
+            raise ValueError(
+                f"Model returned no completion content (done_reason={done_reason!r})."
+            )
+        if done_reason == "length":
+            log.warning(
+                "Model hit num_ctx (done_reason=length) — response is truncated. "
+                "Attempting to salvage partial JSON array."
+            )
+            content = _salvage_partial_json_array(content)
+        return _validate_and_clean_formula_records(_extract_json_array(content))
+
     is_openrouter = base_url.rstrip("/") == _OPENROUTER_URL.rstrip("/")
     payload = {
         "model": model,
