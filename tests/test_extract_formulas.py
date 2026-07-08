@@ -169,3 +169,22 @@ def test_extract_formulas_llm_raises_on_bad_json():
 
         with pytest.raises(ValueError):
             extract_formulas_llm("# Paper\n\n$$x$$\n", "fake-key")
+
+
+def test_backend_has_native_member():
+    from maintenance.extract_formulas import Backend
+
+    assert Backend.OLLAMA_NATIVE.value == "ollama_native"
+
+
+def test_route_accepts_num_ctx():
+    from maintenance.extract_formulas import Backend, Route
+
+    route = Route(
+        backend=Backend.OLLAMA_NATIVE,
+        base_url="http://fake/api/chat",
+        api_key="key",
+        model="qwen3.5:35b",
+        num_ctx=32768,
+    )
+    assert route.num_ctx == 32768

@@ -1329,6 +1329,7 @@ class Backend(enum.Enum):
     OPENROUTER = "openrouter"
     OLLAMA_VLLM = "ollama_vllm"
     OLLAMA_OTHER = "ollama_other"
+    OLLAMA_NATIVE = "ollama_native"
 
 
 @dataclass
@@ -1367,6 +1368,11 @@ class Route:
     max_tokens: int | None = None
     providers: list[str] = field(default_factory=list)
     reasoning_max_tokens: int = 0
+    num_ctx: int | None = None
+    """Context window to request via native Ollama's `options.num_ctx`. Only
+    meaningful for `Backend.OLLAMA_NATIVE` — the OpenAI-compat routes either
+    don't support this field at all, or (per `preflight_check`) discover a
+    ceiling dynamically instead. `None` for the other two backends."""
 
 
 def resolve_route(
