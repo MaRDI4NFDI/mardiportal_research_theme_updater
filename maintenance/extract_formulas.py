@@ -1623,6 +1623,8 @@ def main() -> None:
         "",
     )
     ollama_reasoning_effort = os.environ.get("OLLAMA_REASONING_EFFORT", "").strip() or None
+    ollama_api_style = os.environ.get("OLLAMA_API_STYLE", "openai").strip().lower()
+    ollama_num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", "32768").strip())
 
     for name, val in [("LAKEFS_USER", lakefs_user), ("LAKEFS_PASSWORD", lakefs_password)]:
         if not val:
@@ -1650,6 +1652,8 @@ def main() -> None:
             ollama_model=ollama_model,
             ollama_url=ollama_url,
             ollama_token=ollama_token,
+            ollama_api_style=ollama_api_style,
+            ollama_num_ctx=ollama_num_ctx,
             openrouter_model=openrouter_model,
             openrouter_key=openrouter_key,
             openrouter_max_tokens=openrouter_max_tokens,
@@ -1676,7 +1680,14 @@ def main() -> None:
     log.info("Saved fulltext to %s", fulltext_path)
 
     reasoning_control = None
-    if route.backend != Backend.OPENROUTER:
+    if route.backend == Backend.OLLAMA_NATIVE:
+        log.info("Checking prompt size against num_ctx=%d…", route.num_ctx)
+        try:
+            preflight_check_native(markdown, route.num_ctx)
+        except ValueError as exc:
+            sys.exit(f"Preflight check failed: {exc}")
+        log.info("Preflight OK for num_ctx=%d", route.num_ctx)
+    elif route.backend != Backend.OPENROUTER:
         is_vllm = route.backend == Backend.OLLAMA_VLLM
         log.info("Checking %s's capacity for this paper…", route.model)
         try:
@@ -1702,6 +1713,8 @@ def main() -> None:
             route.reasoning_max_tokens,
             base_url=route.base_url,
             reasoning_control=reasoning_control,
+            api_style="native" if route.backend == Backend.OLLAMA_NATIVE else "openai",
+            num_ctx=route.num_ctx,
         )
     except (ValueError, requests.RequestException) as exc:
         sys.exit(f"LLM extraction failed: {exc}")
