@@ -19,7 +19,8 @@ Environment variables:
     LAKEFS_BRANCH       (default: main)
     SPARQL_ENDPOINT_URL (default: https://query.portal.mardi4nfdi.de/sparql)
     OPENROUTER_API_KEY  API key for openrouter.ai
-    OPENROUTER_MODEL    model to use (default: z-ai/glm-4.7-flash)
+    OPENROUTER_MODEL    model to use. Required unless OLLAMA_MODEL is set — see
+                            "Backend selection" below.
     OPENROUTER_MAX_TOKENS  completion token cap sent to OpenRouter (default: 131072)
     OPENROUTER_PROVIDER    comma-separated provider slug order to pin to, no fallback
                             (e.g. "cloudflare,novita"; case-insensitive); default lets
@@ -35,24 +36,47 @@ Environment variables:
     OLLAMA_MODEL        model id to request from OLLAMA_URL, e.g. "zib/gpt-oss-20b".
                             Setting this switches the script from OpenRouter to the
                             Ollama/LiteLLM backend.
-    OLLAMA_MAX_TOKENS   completion token cap sent to OLLAMA_URL (default: 20000).
-                            Kept separate from OPENROUTER_MAX_TOKENS because
-                            self-hosted deployments often have a much smaller total
-                            context window (input + output combined) than OpenRouter.
-    OLLAMA_DISABLE_THINKING  send chat_template_kwargs.enable_thinking=false to
-                            suppress hidden reasoning on Qwen3-style "thinking"
-                            models (default: true; set to "false" to keep thinking
-                            enabled). Only applies to the Ollama/LiteLLM backend.
+    OLLAMA_DISABLE_THINKING  manage the target model's hidden reasoning automatically
+                            (default: true; set to "false" to leave reasoning at
+                            whatever the model/deployment defaults to). The actual
+                            field sent is chosen per model via
+                            `_reasoning_control_payload()`, not a single hardcoded
+                            convention: a vLLM-backed "thinking" model (e.g.
+                            Qwen3-style) reliably gets
+                            chat_template_kwargs.enable_thinking=false. A model
+                            using OpenAI's reasoning_effort convention instead
+                            (e.g. gpt-oss) gets nothing by default — testing found
+                            no reasoning_effort value reliable for it on this
+                            deployment; see OLLAMA_REASONING_EFFORT to opt into one
+                            anyway. Only applies to the Ollama/LiteLLM backend.
+    OLLAMA_REASONING_EFFORT  value to send for reasoning_effort (e.g. "high") on a
+                            non-vLLM model that supports it. Unset by default —
+                            deliberately not auto-applied, since it was observed to
+                            fix one paper's empty-output failure but break a
+                            previously-reliable paper on 3 of 4 identical retries
+                            for zib/gpt-oss-20b. Use as a manual retry knob when a
+                            run returns empty content, not a default-on setting.
+
+    The Ollama/LiteLLM backend has no max-tokens env var: `preflight_check()` (see
+    below) determines the request's max_tokens dynamically per paper, and fails
+    the run outright rather than sending a request likely to be truncated.
+
+Backend selection:
+    OLLAMA_MODEL set             -> Ollama/LiteLLM backend (OLLAMA_URL, OLLAMA_API_TOKEN required).
+    OLLAMA_MODEL unset, OPENROUTER_MODEL set -> OpenRouter backend (OPENROUTER_API_KEY required).
+    Neither set                  -> exits with an error; a model must be chosen explicitly.
 """
 from __future__ import annotations
 
 import argparse
+import enum
 import json
 import logging
 import os
 import re
 import sys
 import time
+from dataclasses import dataclass, field
 
 import lakefs
 import requests
@@ -75,10 +99,6 @@ _MODEL = "z-ai/glm-4.7-flash"
 # that observed range; OpenRouter/the provider will still apply their own true ceiling
 # if it's lower than this.
 _MAX_COMPLETION_TOKENS = 131072
-# Self-hosted Ollama/LiteLLM deployments have been observed with a much smaller total
-# context window than OpenRouter (e.g. 65536 tokens for input + output combined on
-# zib/qwen3.6-35b-a3b) — 131072 alone exceeds that, so a much lower default is used.
-_OLLAMA_MAX_COMPLETION_TOKENS = 20000
 # Cap on hidden reasoning tokens. Too low starves reasoning-heavy models of planning
 # room (observed: grok-4.3 stopped after 2 formulas using only 722 of an available
 # 2000); too high lets a model burn its whole completion budget "thinking" and leave
@@ -734,6 +754,415 @@ def _log_generation_stats(generation_id: str, api_key: str) -> None:
     log.warning("Could not fetch generation stats for %s: %s", generation_id, last_exc)
 
 
+_EQUATION_MARKER_RE = re.compile(r"\[Equation metadata: source_id=([^;]+); number=([^\]]+)\]")
+# Fallback for Markdown without embedded source markers: count display-math blocks directly.
+_DISPLAY_MATH_RE = re.compile(
+    r"\$\$.+?\$\$"
+    r"|\\\[.+?\\\]"
+    r"|\\begin\{(?:equation|align|gather|multline)\*?\}.+?\\end\{(?:equation|align|gather|multline)\*?\}",
+    re.DOTALL,
+)
+
+
+def count_potential_equations(markdown: str) -> int:
+    """Estimate how many formula records an extraction pass will produce.
+
+    Prefers the `[Equation metadata: source_id=...; number=...]` markers the
+    HTML-to-Markdown conversion embeds immediately before each formula, since that
+    is the same segmentation the extraction prompt is instructed to follow (one
+    record per marker, modulo grouping/splitting). Falls back to counting raw
+    display-math blocks (`$$...$$`, `\\[...\\]`, `equation`/`align`/`gather`/
+    `multline` environments) for Markdown that has no embedded markers.
+
+    Args:
+        markdown: The paper's fulltext Markdown.
+
+    Returns:
+        The estimated number of formula records, used as the driver for
+        `preflight_check`'s output-token estimate.
+    """
+    marker_ids = {m[0].strip() for m in _EQUATION_MARKER_RE.findall(markdown)}
+    if marker_ids:
+        return len(marker_ids)
+    return len(_DISPLAY_MATH_RE.findall(markdown))
+
+
+# Conservative max_tokens used when a model's backend can't be confirmed as vLLM (see
+# _is_vllm_backed) and the capacity gate is therefore skipped. 60000 comfortably covers
+# both the default (no explicit reasoning_effort — completed Q7269940/Q7269937 fine at
+# far less than this) and an OLLAMA_REASONING_EFFORT override, which spends real budget
+# on visible reasoning before the JSON array and needs the extra headroom (60000 is what
+# produced a genuine, if truncated, result on the largest test paper: Q7270050, 88
+# formulas, with reasoning_effort="high").
+_UNVERIFIED_BACKEND_MAX_TOKENS = 60000
+
+# Per (api_root, model) — one throwaway request, so cache it and share it between
+# _is_vllm_backed and _reasoning_control_payload rather than fetching twice.
+_model_info_cache: dict[tuple[str, str], dict] = {}
+
+
+def _fetch_model_info_entry(api_root: str, api_key: str, model: str) -> dict:
+    """Fetch and cache *model*'s entry from LiteLLM's `/model/info`.
+
+    Returns `{}` on any lookup failure (network error, model missing from the
+    response) — callers should treat that the same as "unknown," not raise.
+
+    Args:
+        api_root: Base URL of the LiteLLM/Ollama proxy (without a path suffix).
+        api_key: Bearer token for that endpoint.
+        model: Model id to look up.
+
+    Returns:
+        The matching entry from `/model/info`'s `data` array, or `{}` if it
+        could not be found or fetched.
+    """
+    cache_key = (api_root, model)
+    if cache_key in _model_info_cache:
+        return _model_info_cache[cache_key]
+
+    entry: dict = {}
+    try:
+        resp = requests.get(
+            api_root.rstrip("/") + "/model/info",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        for candidate in resp.json().get("data", []):
+            if candidate.get("model_name") == model:
+                entry = candidate
+                break
+    except (requests.RequestException, ValueError) as exc:
+        log.warning("Could not fetch /model/info entry for %s: %s", model, exc)
+
+    _model_info_cache[cache_key] = entry
+    return entry
+
+
+def _is_vllm_backed(api_root: str, api_key: str, model: str) -> bool:
+    """Determine whether *model* is served by vLLM, via LiteLLM's `/model/info`.
+
+    `_discover_context_ceiling`'s probe relies on vLLM's behavior of validating
+    `max_tokens` against its configured context window synchronously and
+    rejecting an oversized value immediately with a descriptive error. A model
+    routed to a plain Ollama backend instead (observed with `zib/gpt-oss-20b`,
+    `litellm_params.model == "ollama/gpt-oss:20b"`) does not fail fast the same
+    way — sending it `max_tokens=10_000_000` just made it start generating, and
+    the probe request hung until it hit the client-side timeout instead of
+    returning a parseable error. Since there's no reliable way to discover that
+    backend's true ceiling through the API, capacity checking is skipped for it
+    entirely (see `preflight_check`).
+
+    `/model/info`'s `litellm_params.model` is prefixed with the underlying
+    provider (e.g. `"hosted_vllm/..."` vs. `"ollama/..."`); only the
+    `hosted_vllm` prefix is treated as vLLM. A missing/unfetchable entry
+    conservatively returns False, since the fast-fail probe is only safe to run
+    when the vLLM backend has been positively confirmed.
+
+    Args:
+        api_root: Base URL of the LiteLLM/Ollama proxy (without a path suffix).
+        api_key: Bearer token for that endpoint.
+        model: Model id to look up.
+
+    Returns:
+        True if `model` is confirmed vLLM-backed, False otherwise (including
+        when this cannot be determined).
+    """
+    entry = _fetch_model_info_entry(api_root, api_key, model)
+    return entry.get("litellm_params", {}).get("model", "").startswith("hosted_vllm/")
+
+
+def _reasoning_control_payload(
+    api_root: str,
+    api_key: str,
+    model: str,
+    is_vllm: bool,
+    reasoning_effort_override: str | None = None,
+) -> dict:
+    """Choose the request fields that steer *model*'s hidden reasoning.
+
+    Reasoning-capable models don't share one API convention for controlling how
+    much hidden reasoning they do:
+
+    - vLLM-served "thinking" models (e.g. Qwen3-style) use
+      `chat_template_kwargs.enable_thinking`. Setting it `false` reliably
+      suppresses reasoning: reasoning otherwise competes with the actual JSON
+      output for the same small token budget (observed with
+      `zib/qwen3.6-35b-a3b`: reasoning left no room for output at all under a
+      small `max_tokens`). Dispatched via the caller-supplied *is_vllm* — the
+      same route decision `resolve_route()` makes once per run, rather than
+      each function re-querying `_is_vllm_backed` independently — and always
+      applies this fix for a confirmed vLLM backend.
+    - OpenAI-style reasoning models (e.g. gpt-oss) instead expose a
+      `reasoning_effort` parameter (`"low"`/`"medium"`/`"high"`) and silently
+      ignore `chat_template_kwargs`. Unlike the vLLM case, this function does
+      *not* set a value for this family by default: testing on `zib/gpt-oss-20b`
+      found no reliable default. `reasoning_effort="low"` made the model give up
+      and return an empty array; `reasoning_effort="high"` fixed one paper that
+      otherwise always returned empty (Q7270050) but then made a *previously
+      reliable* paper (Q7269940) fail empty on 3 of 4 identical retries — the
+      model's behavior on this deployment appears to be unreliable regardless of
+      the value chosen, not fixed by picking the "right" one. So the caller must
+      opt in via *reasoning_effort_override* (e.g. from an env var) rather than
+      this function guessing a default; leaving it unset here matches this
+      family's previously-observed reliable behavior on most papers.
+
+    Whether a model exposes `reasoning_effort` at all is read from `/model/info`
+    → `model_info.supported_openai_params`, but only for non-vLLM backends: that
+    field is *not* reliable for vLLM-backed models — LiteLLM appears to attach a
+    generic capability list to the whole `hosted_vllm` provider class (it listed
+    `reasoning_effort` for `zib/qwen3.6-35b-a3b` even though sending it there
+    just hangs — the request never returned within 250s, unlike the working
+    `chat_template_kwargs` call). For a genuinely Ollama-backed model (gpt-oss),
+    by contrast, the same field reflects real capability.
+
+    Args:
+        api_root: Base URL of the LiteLLM/Ollama proxy (without a path suffix).
+        api_key: Bearer token for that endpoint.
+        model: Model id to look up.
+        is_vllm: Whether *model* is confirmed vLLM-backed (from `resolve_route`).
+        reasoning_effort_override: Value to send for `reasoning_effort` on a
+            non-vLLM model that supports it (e.g. `"high"`). Only applied when
+            given explicitly; otherwise no reasoning-effort field is sent at all
+            for this model family, since no default was found reliable.
+
+    Returns:
+        A dict of extra fields to merge into the chat-completions request
+        payload (empty if there's nothing to suppress/set).
+    """
+    if is_vllm:
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+
+    if reasoning_effort_override:
+        entry = _fetch_model_info_entry(api_root, api_key, model)
+        supported = entry.get("model_info", {}).get("supported_openai_params") or []
+        if "reasoning_effort" in supported:
+            return {"reasoning_effort": reasoning_effort_override}
+    return {}
+
+
+# Per (chat_url, model) — discovering the ceiling costs one throwaway request, so cache it.
+_context_ceiling_cache: dict[tuple[str, str], int] = {}
+
+_CEILING_ERROR_PATTERNS = (
+    re.compile(r"max_total_tokens=(\d+)"),
+    re.compile(r"maximum context length is (\d+) tokens"),
+    re.compile(r"max_model_len[\"']?\s*[:=]\s*(\d+)"),
+)
+
+
+def _discover_context_ceiling(chat_url: str, api_key: str, model: str) -> int:
+    """Find a model's true total context window (input + output combined) by
+    deliberately overflowing it.
+
+    There is no OpenAI-compatible endpoint that reports a model's context window
+    directly, but vLLM (and LiteLLM proxies in front of it) reject a request whose
+    `max_tokens` alone exceeds that window with a 400 error naming the exact
+    ceiling, e.g. `"...max_tokens=131072 cannot be greater than
+    max_model_len=max_total_tokens=65536..."`. Sending a trivial one-token prompt
+    with a deliberately absurd `max_tokens` (10,000,000) triggers that validation
+    error immediately, before any real inference runs, so the probe is cheap.
+
+    The result is cached per `(chat_url, model)` for the life of the process,
+    since it costs one throwaway request and does not change between calls.
+
+    Args:
+        chat_url: Full chat-completions endpoint URL.
+        api_key: Bearer token for that endpoint.
+        model: Model id to probe.
+
+    Returns:
+        The model's total context window in tokens.
+
+    Raises:
+        ValueError: If the ceiling could not be parsed from the server's response
+            (e.g. the absurd `max_tokens` was, implausibly, accepted, or the error
+            text doesn't match any known phrasing).
+    """
+    cache_key = (chat_url, model)
+    if cache_key in _context_ceiling_cache:
+        return _context_ceiling_cache[cache_key]
+
+    resp = requests.post(
+        chat_url,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 10_000_000,
+        },
+        timeout=30,
+    )
+    for pattern in _CEILING_ERROR_PATTERNS:
+        match = pattern.search(resp.text)
+        if match:
+            ceiling = int(match.group(1))
+            _context_ceiling_cache[cache_key] = ceiling
+            return ceiling
+    raise ValueError(
+        f"Could not determine context ceiling for model={model!r} from probe response "
+        f"(HTTP {resp.status_code}): {resp.text[:300]!r}"
+    )
+
+
+def _count_prompt_tokens(api_root: str, api_key: str, model: str, system_prompt: str, markdown: str) -> int:
+    """Count the exact token cost of the system prompt + paper Markdown via
+    LiteLLM's `/utils/token_counter` endpoint.
+
+    This avoids bundling a separate tokenizer library client-side. The endpoint
+    has been observed to fall back to a generic tokenizer (`tokenizer_type:
+    "openai_tokenizer"`) rather than the model's real one when LiteLLM has no
+    tokenizer mapping registered for a custom model id — verified against a real
+    completion's `usage.prompt_tokens` as ~4% low (27,356 estimated vs. 28,514
+    actual), which is treated as close enough for a capacity check, not an exact
+    accounting.
+
+    Args:
+        api_root: Base URL of the LiteLLM/Ollama proxy (without a path suffix).
+        api_key: Bearer token for that endpoint.
+        model: Model id to count tokens for.
+        system_prompt: The extraction system prompt.
+        markdown: The paper's fulltext Markdown (sent as the user message).
+
+    Returns:
+        The estimated prompt token count.
+    """
+    resp = requests.post(
+        api_root.rstrip("/") + "/utils/token_counter",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": markdown},
+            ],
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["total_tokens"]
+
+
+# Calibrated from real completion_tokens/record ratios observed on this schema: ~540
+# tokens/record (Q7266546, 13 records) and ~444 tokens/record (Q7270050, 45 records
+# salvaged from a truncated response). 600 rounds up from both with a small cushion.
+_TOKENS_PER_EQUATION_RECORD = 600
+_OUTPUT_TOKEN_FIXED_OVERHEAD = 200
+_OUTPUT_TOKEN_SAFETY_MARGIN = 1.3
+
+
+def preflight_check(
+    markdown: str,
+    api_root: str,
+    api_key: str,
+    model: str,
+    is_vllm: bool,
+    system_prompt: str = _SYSTEM_PROMPT,
+) -> int:
+    """Verify a self-hosted model has enough context budget for this paper before
+    spending minutes on a request that would otherwise come back truncated or
+    empty, and compute the `max_tokens` value to request.
+
+    Self-hosted Ollama/LiteLLM deployments (unlike OpenRouter) can have a small,
+    fixed *total* context window shared between input and output — e.g. 65536
+    tokens for `zib/qwen3.6-35b-a3b`. Two distinct failures follow from that:
+
+    1. A `max_tokens` value that alone exceeds the ceiling is rejected outright,
+       regardless of how small the prompt is (seen with the OpenRouter default of
+       131072 against a 65536-token ceiling).
+    2. `prompt_tokens + max_tokens` exceeding the ceiling is rejected once the
+       prompt is large enough, or — if `max_tokens` is set conservatively low
+       enough to avoid that — the model instead runs out of room mid-extraction
+       and returns a truncated result (`finish_reason=length`), as happened on
+       Q7270050: 88 equation markers needed far more output than a fixed 20000
+       token cap allowed, and the model was cut off having covered only 48.9% of
+       them.
+
+    This function computes both piece of the budget and either raises (the
+    request has no realistic chance of succeeding, so don't send it) or returns
+    the `max_tokens` value to request:
+
+    - **Prompt tokens** via `_count_prompt_tokens` (LiteLLM's `/utils/token_counter`
+      endpoint, ~4% accurate against real `usage.prompt_tokens` in testing).
+    - **Estimated output tokens** as
+      `(200 + n_equations * 600) * 1.3`, where `n_equations` comes from
+      `count_potential_equations` and 600 tokens/record is calibrated from real
+      `completion_tokens / len(formulas)` ratios observed in testing (~540 and
+      ~444 tokens/record across two full-paper runs), 200 is a fixed overhead for
+      JSON structure, and 1.3x is a safety margin for verbosity variance.
+    - **The ceiling** via `_discover_context_ceiling`, probed dynamically rather
+      than hardcoded, since it is a property of how the model was deployed
+      (vLLM's `--max-model-len`), not something implied by the model id.
+
+    The ceiling probe only works against a vLLM backend, which fails fast and
+    descriptively on an oversized `max_tokens`. A model routed to plain Ollama
+    doesn't fail fast the same way (observed with `zib/gpt-oss-20b`: the probe
+    just hung until timeout instead of erroring), so the caller-supplied
+    *is_vllm* (from `resolve_route()`, which determines this once per run rather
+    than each function re-querying `_is_vllm_backed` independently) gates
+    whether the probe runs at all; when it isn't confirmed vLLM, this function
+    skips the gate entirely and returns `_UNVERIFIED_BACKEND_MAX_TOKENS`
+    unchecked rather than risk a hung probe.
+
+    Args:
+        markdown: The paper's fulltext Markdown.
+        api_root: Base URL of the LiteLLM/Ollama proxy (without a path suffix,
+            e.g. "https://tllm.science-berlin.de").
+        api_key: Bearer token for that endpoint.
+        model: Model id to check capacity for.
+        is_vllm: Whether *model* is confirmed vLLM-backed.
+        system_prompt: The extraction system prompt that will accompany the
+            paper in the real request (defaults to the module's `_SYSTEM_PROMPT`).
+
+    Returns:
+        The `max_tokens` value to request: the estimated output token need,
+        capped at whatever room remains in the context window after the prompt —
+        or the fixed `_UNVERIFIED_BACKEND_MAX_TOKENS` fallback, unchecked, when
+        the backend isn't confirmed vLLM.
+
+    Raises:
+        ValueError: If the prompt alone meets or exceeds the ceiling, or if the
+            prompt plus the estimated output need exceeds it — in either case the
+            request should not be sent. Never raised for a non-vLLM backend,
+            since capacity isn't checked in that case.
+    """
+    if not is_vllm:
+        log.warning(
+            "%s is not confirmed vLLM-backed; skipping capacity check and using a fixed "
+            "max_tokens=%d (a hung ceiling-probe is worse than an unchecked request here).",
+            model,
+            _UNVERIFIED_BACKEND_MAX_TOKENS,
+        )
+        return _UNVERIFIED_BACKEND_MAX_TOKENS
+
+    chat_url = api_root.rstrip("/") + "/chat/completions"
+    ceiling = _discover_context_ceiling(chat_url, api_key, model)
+    prompt_tokens = _count_prompt_tokens(api_root, api_key, model, system_prompt, markdown)
+
+    if prompt_tokens >= ceiling:
+        raise ValueError(
+            f"Prompt alone ({prompt_tokens} tokens) meets or exceeds {model}'s context "
+            f"ceiling ({ceiling} tokens); this paper cannot be processed by this model."
+        )
+
+    n_equations = count_potential_equations(markdown)
+    estimated_output_tokens = int(
+        (_OUTPUT_TOKEN_FIXED_OVERHEAD + n_equations * _TOKENS_PER_EQUATION_RECORD)
+        * _OUTPUT_TOKEN_SAFETY_MARGIN
+    )
+
+    if prompt_tokens + estimated_output_tokens > ceiling:
+        raise ValueError(
+            f"{model} cannot handle this paper: {prompt_tokens} prompt tokens + an "
+            f"estimated {estimated_output_tokens} output tokens (for ~{n_equations} "
+            f"detected equations) = {prompt_tokens + estimated_output_tokens}, which "
+            f"exceeds its {ceiling}-token context ceiling by "
+            f"{prompt_tokens + estimated_output_tokens - ceiling} tokens."
+        )
+
+    return min(estimated_output_tokens, ceiling - prompt_tokens)
+
+
 def extract_formulas_llm(
     markdown: str,
     api_key: str,
@@ -742,7 +1171,7 @@ def extract_formulas_llm(
     providers: list[str] | None = None,
     reasoning_max_tokens: int = _REASONING_MAX_TOKENS,
     base_url: str = _OPENROUTER_URL,
-    disable_thinking: bool = False,
+    reasoning_control: dict | None = None,
 ) -> list[dict]:
     """Send *markdown* to an OpenAI-compatible chat-completions endpoint and return
     extracted formulas as a list of dicts.
@@ -753,14 +1182,14 @@ def extract_formulas_llm(
     since those are OpenRouter-specific extensions not understood by other
     OpenAI-compatible servers.
 
-    *disable_thinking*, when true, sends `chat_template_kwargs: {"enable_thinking":
-    false}` — the vLLM/Qwen3 convention for turning off hidden reasoning. On a
+    *reasoning_control*, if given, is merged directly into the request payload —
+    normally the output of `_reasoning_control_payload()`, which picks the right
+    field (`chat_template_kwargs.enable_thinking` or `reasoning_effort`) for the
+    target model rather than this function hardcoding one convention. On a
     self-hosted model with a small total context window (input + output combined,
-    e.g. 65536 tokens), a "thinking" model otherwise spends the whole completion
-    budget on invisible reasoning and returns empty content for anything but a
-    trivial paper (observed with zib/qwen3.6-35b-a3b: a ~28k-token prompt left no
-    room for both reasoning and the JSON array). Unknown/non-reasoning backends
-    are expected to ignore this field.
+    e.g. 65536 tokens), an unmanaged "thinking" model can spend the whole
+    completion budget on invisible reasoning and return empty content for
+    anything but a trivial paper.
 
     *providers*, if given, pins the OpenRouter request to that ordered list of
     upstream providers (e.g. ["cloudflare", "novita"]) with no fallback to
@@ -808,8 +1237,8 @@ def extract_formulas_llm(
                 "order": [p.lower() for p in providers],
                 "allow_fallbacks": False,
             }
-    if disable_thinking:
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    if reasoning_control:
+        payload.update(reasoning_control)
     log.info("Requesting model=%s base_url=%s provider=%s", model, base_url, payload.get("provider"))
     resp = requests.post(
         base_url,
@@ -893,6 +1322,129 @@ def _output_path(qid: str, model: str) -> str:
     return os.path.join(os.path.dirname(__file__), f"{qid}_formulas__{slug}.json")
 
 
+class Backend(enum.Enum):
+    """Which LLM backend a run uses, and — for Ollama — which capacity/reasoning
+    handling applies. See `resolve_route`."""
+
+    OPENROUTER = "openrouter"
+    OLLAMA_VLLM = "ollama_vllm"
+    OLLAMA_OTHER = "ollama_other"
+
+
+@dataclass
+class Route:
+    """The fully-resolved backend route for one script invocation.
+
+    Produced once by `resolve_route()` so that `preflight_check`,
+    `_reasoning_control_payload`, and `extract_formulas_llm` each consume an
+    already-decided route instead of independently re-deriving parts of it.
+    Before this existed, the same question was answered three different ways in
+    three different places: backend selection was read from env vars directly in
+    `main()`; vLLM-vs-not was re-queried via `_is_vllm_backed` from two separate
+    call sites; and OpenRouter-vs-not was inferred a third way, by comparing
+    `base_url` against `_OPENROUTER_URL`, inside `extract_formulas_llm`.
+
+    Attributes:
+        backend: Which route this is.
+        base_url: Full chat-completions endpoint URL to POST to.
+        api_key: Bearer token for that endpoint.
+        model: Model id to request.
+        api_root: Base URL of the LiteLLM/Ollama proxy (without a path suffix),
+            used for the preflight/reasoning-control API calls. `None` for
+            OpenRouter, which has no equivalent side-channel endpoints.
+        max_tokens: Fixed completion-token cap. Only meaningful for OpenRouter;
+            `None` for Ollama, since `preflight_check` computes it per paper.
+        providers: OpenRouter provider-pin order. Empty for Ollama.
+        reasoning_max_tokens: OpenRouter reasoning-token cap. `0` for Ollama,
+            which uses `_reasoning_control_payload` instead.
+    """
+
+    backend: Backend
+    base_url: str
+    api_key: str
+    model: str
+    api_root: str | None = None
+    max_tokens: int | None = None
+    providers: list[str] = field(default_factory=list)
+    reasoning_max_tokens: int = 0
+
+
+def resolve_route(
+    *,
+    ollama_model: str,
+    ollama_url: str,
+    ollama_token: str,
+    openrouter_model: str,
+    openrouter_key: str,
+    openrouter_max_tokens: int,
+    openrouter_providers: list[str],
+    openrouter_reasoning_tokens: int,
+) -> Route:
+    """Decide which backend/route this run should use — the single place that
+    answers "which route to take," so nothing downstream has to re-derive it.
+
+    Precedence: `ollama_model` set -> Ollama/LiteLLM backend (requires
+    `ollama_url` and `ollama_token`; vLLM-vs-not is determined once here via
+    `_is_vllm_backed`, a single `/model/info` lookup, cached for the process).
+    Otherwise `openrouter_model` set -> OpenRouter backend (requires
+    `openrouter_key`). Neither set is an error: a model must be chosen
+    explicitly, there is no implicit default backend or model.
+
+    Args:
+        ollama_model: `OLLAMA_MODEL` env var.
+        ollama_url: `OLLAMA_URL` env var.
+        ollama_token: `OLLAMA_API_TOKEN` env var.
+        openrouter_model: `OPENROUTER_MODEL` env var.
+        openrouter_key: `OPENROUTER_API_KEY` env var.
+        openrouter_max_tokens: Parsed `OPENROUTER_MAX_TOKENS` value.
+        openrouter_providers: Parsed `OPENROUTER_PROVIDER` list.
+        openrouter_reasoning_tokens: Parsed `OPENROUTER_REASONING_TOKENS` value.
+
+    Returns:
+        The resolved `Route`: `Backend.OLLAMA_VLLM` or `Backend.OLLAMA_OTHER`
+        for the Ollama/LiteLLM backend, or `Backend.OPENROUTER`.
+
+    Raises:
+        ValueError: If neither `ollama_model` nor `openrouter_model` is set, or
+            the backend selected by precedence is missing a required
+            credential.
+    """
+    if ollama_model:
+        if not ollama_url or not ollama_token:
+            raise ValueError(
+                "OLLAMA_URL and OLLAMA_API_TOKEN are required when OLLAMA_MODEL is set."
+            )
+        backend = (
+            Backend.OLLAMA_VLLM
+            if _is_vllm_backed(ollama_url, ollama_token, ollama_model)
+            else Backend.OLLAMA_OTHER
+        )
+        return Route(
+            backend=backend,
+            base_url=ollama_url.rstrip("/") + "/chat/completions",
+            api_key=ollama_token,
+            model=ollama_model,
+            api_root=ollama_url,
+        )
+
+    if openrouter_model:
+        if not openrouter_key:
+            raise ValueError("OPENROUTER_API_KEY is required when OPENROUTER_MODEL is set.")
+        return Route(
+            backend=Backend.OPENROUTER,
+            base_url=_OPENROUTER_URL,
+            api_key=openrouter_key,
+            model=openrouter_model,
+            max_tokens=openrouter_max_tokens,
+            providers=openrouter_providers,
+            reasoning_max_tokens=openrouter_reasoning_tokens,
+        )
+
+    raise ValueError(
+        "Set OLLAMA_MODEL (self-hosted) or OPENROUTER_MODEL (OpenRouter) to select a backend."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -914,7 +1466,7 @@ def main() -> None:
     lakefs_branch = os.environ.get("LAKEFS_BRANCH", _LAKEFS_BRANCH).strip()
     sparql_endpoint = os.environ.get("SPARQL_ENDPOINT_URL", _SPARQL_ENDPOINT).strip()
     openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    openrouter_model = os.environ.get("OPENROUTER_MODEL", _MODEL).strip()
+    openrouter_model = os.environ.get("OPENROUTER_MODEL", "").strip()
     openrouter_max_tokens = int(
         os.environ.get("OPENROUTER_MAX_TOKENS", str(_MAX_COMPLETION_TOKENS)).strip()
     )
@@ -927,34 +1479,16 @@ def main() -> None:
     ollama_url = os.environ.get("OLLAMA_URL", "").strip()
     ollama_token = os.environ.get("OLLAMA_API_TOKEN", "").strip()
     ollama_model = os.environ.get("OLLAMA_MODEL", "").strip()
-    ollama_max_tokens = int(
-        os.environ.get("OLLAMA_MAX_TOKENS", str(_OLLAMA_MAX_COMPLETION_TOKENS)).strip()
-    )
     ollama_disable_thinking = os.environ.get("OLLAMA_DISABLE_THINKING", "true").strip().lower() not in (
         "0",
         "false",
         "",
     )
+    ollama_reasoning_effort = os.environ.get("OLLAMA_REASONING_EFFORT", "").strip() or None
 
     for name, val in [("LAKEFS_USER", lakefs_user), ("LAKEFS_PASSWORD", lakefs_password)]:
         if not val:
             sys.exit(f"Missing environment variable: {name}")
-
-    # OLLAMA_MODEL set -> use the Ollama/LiteLLM backend instead of OpenRouter.
-    use_ollama = bool(ollama_model)
-    if use_ollama:
-        for name, val in [("OLLAMA_URL", ollama_url), ("OLLAMA_API_TOKEN", ollama_token)]:
-            if not val:
-                sys.exit(f"Missing environment variable: {name} (required when OLLAMA_MODEL is set)")
-        llm_base_url = ollama_url.rstrip("/") + "/chat/completions"
-        llm_api_key = ollama_token
-        llm_model = ollama_model
-        llm_max_tokens = ollama_max_tokens
-    else:
-        llm_base_url = _OPENROUTER_URL
-        llm_api_key = openrouter_key
-        llm_model = openrouter_model
-        llm_max_tokens = openrouter_max_tokens
 
     if not args.qid:
         # --- List mode: scan lakeFS, fetch titles, display table ---
@@ -972,12 +1506,23 @@ def main() -> None:
         print(f"\n{len(qids)} paper(s) available in lakeFS.\n")
         sys.exit(0)
 
-    # --- Stage 4: validate requested QID ---
+    # --- Stage 4: resolve backend/route, then validate requested QID ---
+    try:
+        route = resolve_route(
+            ollama_model=ollama_model,
+            ollama_url=ollama_url,
+            ollama_token=ollama_token,
+            openrouter_model=openrouter_model,
+            openrouter_key=openrouter_key,
+            openrouter_max_tokens=openrouter_max_tokens,
+            openrouter_providers=openrouter_providers,
+            openrouter_reasoning_tokens=openrouter_reasoning_tokens,
+        )
+    except ValueError as exc:
+        sys.exit(str(exc))
+
     target = args.qid.upper()
     session = requests.Session()
-
-    if not use_ollama and not openrouter_key:
-        sys.exit("Missing environment variable: OPENROUTER_API_KEY")
 
     # --- Stage 5: download Markdown ---
     log.info("Downloading Markdown for %s…", target)
@@ -992,25 +1537,40 @@ def main() -> None:
         fh.write(markdown)
     log.info("Saved fulltext to %s", fulltext_path)
 
+    reasoning_control = None
+    if route.backend != Backend.OPENROUTER:
+        is_vllm = route.backend == Backend.OLLAMA_VLLM
+        log.info("Checking %s's capacity for this paper…", route.model)
+        try:
+            route.max_tokens = preflight_check(markdown, route.api_root, route.api_key, route.model, is_vllm)
+        except (ValueError, requests.RequestException) as exc:
+            sys.exit(f"Preflight check failed: {exc}")
+        log.info("Preflight OK — requesting max_tokens=%d", route.max_tokens)
+        if ollama_disable_thinking:
+            reasoning_control = _reasoning_control_payload(
+                route.api_root, route.api_key, route.model, is_vllm, ollama_reasoning_effort
+            )
+            log.info("Reasoning control for %s: %s", route.model, reasoning_control)
+
     # --- Stage 6: call LLM ---
-    log.info("Sending to %s via %s…", llm_model, "Ollama/LiteLLM" if use_ollama else "OpenRouter")
+    log.info("Sending to %s via %s…", route.model, route.backend.value)
     try:
         formulas = extract_formulas_llm(
             markdown,
-            llm_api_key,
-            llm_model,
-            llm_max_tokens,
-            openrouter_providers,
-            openrouter_reasoning_tokens,
-            base_url=llm_base_url,
-            disable_thinking=use_ollama and ollama_disable_thinking,
+            route.api_key,
+            route.model,
+            route.max_tokens,
+            route.providers,
+            route.reasoning_max_tokens,
+            base_url=route.base_url,
+            reasoning_control=reasoning_control,
         )
     except (ValueError, requests.RequestException) as exc:
         sys.exit(f"LLM extraction failed: {exc}")
     log.info("Extracted %d formula(s)", len(formulas))
 
     # --- Stage 7: save output ---
-    out_path = _output_path(target, llm_model)
+    out_path = _output_path(target, route.model)
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(formulas, fh, indent=2, ensure_ascii=False)
     print(f"Wrote {len(formulas)} formula(s) to {out_path}")
