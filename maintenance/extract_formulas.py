@@ -1163,6 +1163,59 @@ def preflight_check(
     return min(estimated_output_tokens, ceiling - prompt_tokens)
 
 
+# No LiteLLM-style token-counter or context-ceiling-probe endpoint exists on a
+# plain Ollama/Open WebUI deployment (confirmed against https://ollama.zib.de:
+# /model/info and /utils/token_counter both 404 through the native API path).
+# Since num_ctx is a value *we* choose for this route rather than one to be
+# discovered, a fixed chars-per-token ratio is close enough for a sanity
+# check — this guards against an obviously-too-small num_ctx, not an exact
+# accounting.
+_NATIVE_CHARS_PER_TOKEN = 3.5
+
+
+def preflight_check_native(
+    markdown: str,
+    num_ctx: int,
+    system_prompt: str = _SYSTEM_PROMPT,
+) -> None:
+    """Sanity-check that *markdown* is unlikely to overflow *num_ctx* on a
+    native-Ollama route before spending minutes on a request.
+
+    Unlike `preflight_check` (which probes a LiteLLM/vLLM deployment's true
+    ceiling and computes a `max_tokens` to request), this route sets
+    `num_ctx` directly in the request, so there is nothing to discover —
+    only a cheap local estimate to catch an obviously-undersized value ahead
+    of time rather than after the model returns truncated or empty content.
+
+    Args:
+        markdown: The paper's fulltext Markdown.
+        num_ctx: The context window that will be requested via
+            `options.num_ctx`.
+        system_prompt: The extraction system prompt that will accompany the
+            paper in the real request.
+
+    Raises:
+        ValueError: If the estimated prompt + output token need exceeds
+            `num_ctx`.
+    """
+    prompt_chars = len(system_prompt) + len(markdown)
+    estimated_prompt_tokens = int(prompt_chars / _NATIVE_CHARS_PER_TOKEN)
+
+    n_equations = count_potential_equations(markdown)
+    estimated_output_tokens = int(
+        (_OUTPUT_TOKEN_FIXED_OVERHEAD + n_equations * _TOKENS_PER_EQUATION_RECORD)
+        * _OUTPUT_TOKEN_SAFETY_MARGIN
+    )
+
+    total = estimated_prompt_tokens + estimated_output_tokens
+    if total > num_ctx:
+        raise ValueError(
+            f"Estimated {estimated_prompt_tokens} prompt tokens + {estimated_output_tokens} "
+            f"output tokens (for ~{n_equations} detected equations) = {total}, which exceeds "
+            f"num_ctx={num_ctx}. Increase OLLAMA_NUM_CTX or use a paper with fewer equations."
+        )
+
+
 def extract_formulas_llm(
     markdown: str,
     api_key: str,

@@ -188,3 +188,22 @@ def test_route_accepts_num_ctx():
         num_ctx=32768,
     )
     assert route.num_ctx == 32768
+
+
+def test_preflight_check_native_passes_for_small_paper():
+    from maintenance.extract_formulas import preflight_check_native
+
+    markdown = "# Paper\n\n$$E = mc^2$$\n"
+    # Should not raise for a tiny paper against a generous context window.
+    assert preflight_check_native(markdown, num_ctx=32768) is None
+
+
+def test_preflight_check_native_raises_when_over_budget():
+    from maintenance.extract_formulas import preflight_check_native
+
+    # 200 equation markers force a large estimated-output-token need that
+    # cannot fit in a tiny num_ctx, regardless of prompt size.
+    markdown = "\n\n".join(f"$$x_{i} = {i}$$" for i in range(200))
+
+    with pytest.raises(ValueError, match="num_ctx"):
+        preflight_check_native(markdown, num_ctx=512)
