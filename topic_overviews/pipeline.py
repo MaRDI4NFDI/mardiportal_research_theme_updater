@@ -443,25 +443,34 @@ def harvest_step(
             ", ".join(f"{t.label} ({t.qid})" for t in covering),
         )
         query_imported = 0
-        for record in fetch(harvest_config):
-            try:
-                did_import = _process_record(
-                    record, "arXiv", covering, config, state, kg,
-                    classify, summarize, keyworder, llm, model,
-                    topic_label, imported_titles, imported_qids, theme_added,
-                    lookup_zb=_lookup_zb,
-                    link_cites_fn=_link_cites,
-                )
-            except PipelineError:
-                raise
-            except Exception as exc:
-                log.warning("Skipping paper %s due to error: %s", record.record_id, exc)
-                continue
-            if did_import:
-                imported += 1
-                query_imported += 1
-            if config.harvest_limit and query_imported >= config.harvest_limit:
-                break
+        try:
+            for record in fetch(harvest_config):
+                try:
+                    did_import = _process_record(
+                        record, "arXiv", covering, config, state, kg,
+                        classify, summarize, keyworder, llm, model,
+                        topic_label, imported_titles, imported_qids, theme_added,
+                        lookup_zb=_lookup_zb,
+                        link_cites_fn=_link_cites,
+                    )
+                except PipelineError:
+                    raise
+                except Exception as exc:
+                    log.warning("Skipping paper %s due to error: %s", record.record_id, exc)
+                    continue
+                if did_import:
+                    imported += 1
+                    query_imported += 1
+                if config.harvest_limit and query_imported >= config.harvest_limit:
+                    break
+        except PipelineError:
+            raise
+        except Exception as exc:
+            log.warning(
+                "arXiv query %r failed (%s) — skipping, will retry on next run",
+                harvest_config.arxiv_query, exc,
+            )
+            continue
 
     if publisher is not None and not config.dry_run and imported_titles:
         publisher.purge(imported_titles)
