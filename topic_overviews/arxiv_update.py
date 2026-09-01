@@ -109,6 +109,7 @@ def run_arxiv_update(
         log.info("Limited to first %d paper(s)", limit)
 
     uploaded = skipped_exists = skipped_error = 0
+    upload_error = 0  # lakeFS upload failures specifically (not arXiv fetch misses)
 
     for i, (qid, arxiv_id) in enumerate(papers, 1):
         log.info("[%d/%d] %s  arXiv:%s", i, len(papers), qid, arxiv_id)
@@ -143,6 +144,7 @@ def run_arxiv_update(
         except Exception as exc:
             log.warning("  -> lakeFS upload failed: %s", exc)
             skipped_error += 1
+            upload_error += 1
 
         time.sleep(0.5)
 
@@ -157,6 +159,14 @@ def run_arxiv_update(
             log.info("Committed: %s", commit_id)
         except Exception as exc:
             log.warning("Commit failed: %s", exc)
+
+    # A run where every attempted upload failed is a hard failure, not a
+    # success with warnings — otherwise a broken lakeFS write path (auth,
+    # object-store rejection, ...) stays green and unnoticed for days.
+    if not dry_run and upload_error > 0 and uploaded == 0:
+        raise RuntimeError(
+            f"All {upload_error} lakeFS upload(s) failed; see warnings above."
+        )
 
     return ArxivUpdateResult(
         uploaded=uploaded,

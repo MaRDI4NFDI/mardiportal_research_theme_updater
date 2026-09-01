@@ -45,6 +45,11 @@ def upload_markdown(
         markdown.encode("utf-8"),
         mode="wb",
         content_type="text/markdown; charset=utf-8",
+        # Route bytes through the lakeFS API instead of a presigned PUT to the
+        # object store. The SDK does not include Content-Type in the presigned
+        # SigV4 signature, and Ceph RGW (Squid) rejects the mismatch with
+        # 403 AccessDenied, failing every upload.
+        pre_sign=False,
     )
     return f"{branch}/{path}"
 
