@@ -32,18 +32,25 @@ class Topic:
         return None
 
 
-_COUNT_QUERY = """SELECT (COUNT(?topic) AS ?count) WHERE {{
+# Explicit prefixes: QLever, unlike the old Blazegraph endpoint, predefines none.
+_PREFIXES = """PREFIX wd: <https://portal.mardi4nfdi.de/entity/>
+PREFIX wdt: <https://portal.mardi4nfdi.de/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
+"""
+
+_COUNT_QUERY = _PREFIXES + """SELECT (COUNT(?topic) AS ?count) WHERE {{
   ?topic wdt:{p_inst} wd:{cls} .
 }}"""
 
-_QUERY = """SELECT ?topic ?label ?desc {query_select} WHERE {{
+_QUERY = _PREFIXES + """SELECT ?topic ?label ?desc {query_select} WHERE {{
   ?topic wdt:{p_inst} wd:{cls} .
   {maintainer_filter}?topic rdfs:label ?label . FILTER(LANG(?label) = "en")
   OPTIONAL {{ ?topic schema:description ?desc . FILTER(LANG(?desc) = "en") }}
   {query_optionals}
 }}"""
 
-_KEYWORDS_QUERY = """SELECT ?topic ?keyword WHERE {{
+_KEYWORDS_QUERY = _PREFIXES + """SELECT ?topic ?keyword WHERE {{
   ?topic wdt:{p_inst} wd:{cls} .
   {maintainer_filter}?topic wdt:{p_kw} ?keyword .
 }}"""

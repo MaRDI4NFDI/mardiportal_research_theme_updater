@@ -24,6 +24,7 @@ P_ZBMATH_ID = "P225"           # zbMATH Open document ID (external identifier; f
 P_ZBMATH_DE_NUMBER = "P1451"   # zbMATH DE Number (numeric internal document_id)
 P_ZBMATH_AUTHOR_ID = "P676"    # zbMATH Autorenkennung (author identifier)
 P_CITES_WORK = "P223"          # cites work (paper → paper citation link)
+P_PREPRINT_OF = "P1676"        # preprint of (arXiv item → published zbMATH item)
 P_STATED_IN = "P98"            # stated in (reference snak — source of a claim)
 P_PUBLISHED_IN = "P200"        # published in (journal/proceedings item)
 P_MSC_ID = "P226"              # Mathematics Subject Classification ID (MSC code, one per claim)

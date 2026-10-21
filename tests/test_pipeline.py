@@ -574,3 +574,89 @@ def test_ensure_theme_pages_dry_run_writes_nothing():
     assert result == ["Online Algorithms"]
     assert pub.edited == []
     assert kg.sitelinks_set == []
+
+
+# ---------------------------------------------------------------------------
+# Preprint linking (issue #294): arXiv item --P1676--> published zbMATH item,
+# never zbMATH data on the arXiv item.
+# ---------------------------------------------------------------------------
+
+class LinkingKG(FakeKG):
+    def __init__(self, published=None, arxiv_items=None):
+        super().__init__()
+        self.published = published or {}       # DE number -> QID
+        self.arxiv_items = arxiv_items or {}   # arXiv ID -> QID
+        self.preprint_links = []
+    def find_published_version(self, zb):
+        return self.published.get(zb.zbmath_de_number)
+    def find_arxiv_item(self, arxiv_id):
+        return self.arxiv_items.get(arxiv_id)
+    def link_preprint(self, preprint_qid, published_qid):
+        self.preprint_links.append((preprint_qid, published_qid))
+    def add_zbmath_enrichment(self, *a, **k):
+        raise AssertionError("zbMATH data must not be written onto arXiv items")
+
+
+ZB_PUBLISHED = PaperRecord(
+    "", "Paper One", "", ["A"], [], "2025-01-01", "10.1/x",
+    zbmath_id="1541.68445", zbmath_de_number="7860651", preprint_arxiv_id="2401.00001",
+)
+
+
+def _classify_all(paper, topics, *, model, api_key, **kwargs):
+    return ["Q11"]
+
+
+def test_arxiv_import_links_to_published_zbmath_item():
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    kg = LinkingKG(published={"7860651": "Q42"})
+    pipeline.harvest_step(
+        cfg, State(), topics=TOPICS, kg=kg, model="m",
+        fetch=lambda c: iter([P1]), classify=_classify_all,
+        summarize=_summ(), keyworder=_kw(),
+        lookup_zb=lambda arxiv_id: ZB_PUBLISHED if arxiv_id == "2401.00001" else None,
+    )
+    assert kg.preprint_links == [("Q999", "Q42")]
+
+
+def test_arxiv_import_without_published_item_in_kg_writes_nothing():
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    kg = LinkingKG()
+    count = pipeline.harvest_step(
+        cfg, State(), topics=TOPICS, kg=kg, model="m",
+        fetch=lambda c: iter([P1]), classify=_classify_all,
+        summarize=_summ(), keyworder=_kw(),
+        lookup_zb=lambda arxiv_id: ZB_PUBLISHED,
+    )
+    assert count == 1
+    assert kg.preprint_links == []
+
+
+def test_zbmath_import_links_existing_arxiv_item():
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    kg = LinkingKG(arxiv_items={"2401.00001": "Q7"})
+    zb_topic = Topic(qid="Q30", label="Numerics", description="", zbmath_query="cc:65-XX")
+    pipeline.harvest_step(
+        cfg, State(), topics=[zb_topic], kg=kg, model="m",
+        fetch=lambda c: iter([]), fetch_zb=lambda qs, sd, **kw: iter([ZB_PUBLISHED]),
+        lookup_oa_enrichment=lambda doi, arxiv_id, **kw: None,
+        classify=lambda paper, topics, **kw: ["Q30"],
+        summarize=_summ(), keyworder=_kw(),
+    )
+    assert kg.imported == [("", "tl;dr", ["kw"])]     # published item gets no arXiv ID
+    assert kg.preprint_links == [("Q7", "Q999")]
+
+
+def test_already_imported_paper_still_gets_linked():
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    kg = LinkingKG(published={"7860651": "Q42"})
+    kg.paper_qids["2401.00001"] = "Q7"
+    kg.paper_tldrs.add("Q7")
+    pipeline.harvest_step(
+        cfg, State(), topics=TOPICS, kg=kg, model="m",
+        fetch=lambda c: iter([P1]), classify=_classify_all,
+        summarize=_summ(), keyworder=_kw(),
+        lookup_zb=lambda arxiv_id: ZB_PUBLISHED,
+    )
+    assert kg.imported == []
+    assert kg.preprint_links == [("Q7", "Q42")]

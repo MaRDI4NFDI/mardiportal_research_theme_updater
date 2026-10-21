@@ -309,3 +309,103 @@ def test_import_paper_without_arxiv_id_writes_no_p21():
     qid = kg.import_paper(record)
     assert qid == "Q999"
     assert M.P_ARXIV_ID not in claims_written
+
+
+# ---------------------------------------------------------------------------
+# arXiv items and published (zbMATH) items stay separate (issue #294)
+# ---------------------------------------------------------------------------
+
+ZB_PAPER = PaperRecord(
+    arxiv_id="", title="A New Bound for Online Caching", abstract="",
+    authors=["Jane Doe"], categories=[], published="2025-01-01", doi="10.1000/xyz",
+    zbmath_id="1541.68445", zbmath_de_number="7860651", preprint_arxiv_id="2401.00001",
+)
+
+
+def test_import_paper_never_adds_arxiv_id_to_zbmath_item():
+    item = FakeItem(values={"P1451": ["7860651"]})
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: "Q500"
+    kg.import_paper(PAPER)
+    assert "P21" not in [p for p, _ in item.claims]
+
+
+def test_import_paper_never_adds_zbmath_ids_to_arxiv_item():
+    item = FakeItem(values={"P21": ["2401.00001"]})
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: "Q500"
+    kg.import_paper(ZB_PAPER)
+    props = [p for p, _ in item.claims]
+    assert "P225" not in props and "P1451" not in props
+
+
+def _recording_lookup(kg, hits=None):
+    calls = []
+    def fake(prop, value, exclude_props=()):
+        calls.append((prop, value, tuple(exclude_props)))
+        return (hits or {}).get(prop)
+    kg._sparql_find_by_value = fake
+    return calls
+
+
+def test_find_existing_arxiv_record_skips_zbmath_items_on_shared_ids():
+    kg = KGClient(FakeMC())
+    calls = _recording_lookup(kg)
+    kg.find_existing_paper(PAPER)
+    assert calls[0] == ("P21", "2401.00001", ())
+    assert ("P27", "10.1000/xyz", ("P225", "P1451")) in calls
+
+
+def test_find_existing_zbmath_record_skips_arxiv_items_on_shared_ids():
+    kg = KGClient(FakeMC())
+    calls = _recording_lookup(kg)
+    kg.find_existing_paper(ZB_PAPER)
+    assert calls[:2] == [("P225", "1541.68445", ()), ("P1451", "7860651", ())]
+    assert ("P27", "10.1000/xyz", ("P21",)) in calls
+    assert not any(prop == "P21" for prop, _, _ in calls)
+
+
+def test_find_published_version_prefers_de_number():
+    kg = KGClient(FakeMC())
+    calls = _recording_lookup(kg, hits={"P1451": "Q42"})
+    assert kg.find_published_version(ZB_PAPER) == "Q42"
+    assert calls == [("P1451", "7860651", ("P21",))]
+
+
+def _fake_http(monkeypatch, kg, existing_claims):
+    import topic_overviews.kg.client as client_mod
+    posts = []
+    class Resp:
+        def __init__(self, data): self._d = data
+        def json(self): return self._d
+    monkeypatch.setattr(client_mod, "http_get", lambda *a, **k: Resp({"claims": existing_claims}))
+    monkeypatch.setattr(client_mod, "http_post", lambda s, url, data=None, **k: posts.append(data))
+    kg._get_session = lambda: None
+    kg._csrf = lambda: "tok"
+    return posts
+
+
+def test_link_preprint_writes_p1676(monkeypatch):
+    import json
+    kg = KGClient(FakeMC(), api_url="http://api")
+    posts = _fake_http(monkeypatch, kg, {})
+    assert kg.link_preprint("Q7", "Q42") is True
+    assert len(posts) == 1
+    assert posts[0]["entity"] == "Q7" and posts[0]["property"] == "P1676"
+    assert json.loads(posts[0]["value"]) == {"entity-type": "item", "id": "Q42"}
+
+
+def test_link_preprint_is_idempotent(monkeypatch):
+    kg = KGClient(FakeMC(), api_url="http://api")
+    existing = {"P1676": [{"mainsnak": {"datavalue": {"value": {"id": "Q42"}}}}]}
+    posts = _fake_http(monkeypatch, kg, existing)
+    assert kg.link_preprint("Q7", "Q42") is False
+    assert kg.link_preprint("Q7", "Q7") is False
+    assert posts == []
+
+
+def test_write_missing_identifiers_never_mixes_kinds(monkeypatch):
+    kg = KGClient(FakeMC(), api_url="http://api")
+    posts = _fake_http(monkeypatch, kg, {"P1451": [{}]})   # a zbMATH item
+    kg.write_missing_identifiers("Q500", PAPER)             # arXiv record matched it
+    assert [p["property"] for p in posts] == ["P27"]        # DOI only, no P21

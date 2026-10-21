@@ -51,6 +51,24 @@ DOC_WITHOUT_ARXIV = {
     "year": 2026,
 }
 
+# zbMATH's own record of an arXiv preprint (not a published paper)
+DOC_ARXIV_PREPRINT = {
+    "id": 903118792,
+    "identifier": "arXiv:2606.01234",
+    "title": {"title": "An Algorithm for Quantum Circuits"},
+    "contributors": {
+        "authors": [
+            {"name": "Doe, Jane", "codes": ["doe.jane.1"], "aliases": [], "checked": "0"},
+        ],
+        "editors": [],
+    },
+    "msc": [{"code": "68W25", "scheme": "msc2020"}],
+    "links": [
+        {"identifier": "2606.01234", "type": "arxiv", "url": "https://arxiv.org/abs/2606.01234"},
+    ],
+    "year": 2026,
+}
+
 DOC_NO_AUTHORS = {
     "id": 1111111,
     "identifier": "2606.11111",
@@ -141,7 +159,8 @@ def test_parse_with_arxiv():
     records = parse_documents_page([DOC_WITH_ARXIV])
     assert len(records) == 1
     r = records[0]
-    assert r.arxiv_id == "2606.01234"
+    assert r.arxiv_id == ""                   # published item never gets P21 ...
+    assert r.preprint_arxiv_id == "2606.01234"  # ... the preprint is linked via P1676
     assert r.zbmath_id == "2606.12345"        # identifier string → P225
     assert r.zbmath_de_number == "7266523"    # numeric id → P1451
     assert r.title == "An Algorithm for Quantum Circuits"
@@ -152,7 +171,24 @@ def test_parse_with_arxiv():
     assert r.msc_codes == ["68W25", "81P68"]  # MSC codes → P226
     assert r.doi == "10.1234/example"
     assert r.published == "2026-01-01"
-    assert r.record_id == "2606.01234"        # arxiv_id takes precedence
+    assert r.record_id == "zbmath:2606.12345"
+
+
+def test_parse_published_without_doi_gets_no_arxiv_doi():
+    doc = dict(DOC_WITH_ARXIV, links=[DOC_WITH_ARXIV["links"][1]])
+    r = parse_documents_page([doc])[0]
+    assert r.doi is None
+    assert r.preprint_arxiv_id == "2606.01234"
+
+
+def test_parse_arxiv_preprint_record_is_an_arxiv_paper():
+    r = parse_documents_page([DOC_ARXIV_PREPRINT])[0]
+    assert r.arxiv_id == "2606.01234"
+    assert r.preprint_arxiv_id == ""
+    assert r.zbmath_id == ""                  # no zbMATH IDs on the arXiv item
+    assert r.zbmath_de_number == ""
+    assert r.doi == "10.48550/arXiv.2606.01234"
+    assert r.record_id == "2606.01234"
 
 
 def test_parse_without_arxiv():
@@ -259,11 +295,24 @@ def test_lookup_found():
     assert result is not None
     assert result.zbmath_id == "2606.12345"      # identifier string → P225
     assert result.zbmath_de_number == "7266523"  # numeric id → P1451
-    assert result.arxiv_id == "2606.01234"
+    assert result.preprint_arxiv_id == "2606.01234"
     assert result.zbmath_author_ids == [("Doe, Jane", "doe.jane.1"), ("Smith, John", "smith.john.1")]
     params = session.calls[0]["params"]
     assert params["search_string"] == "arxiv:2606.01234"
     assert params["results_per_page"] == 3
+
+
+def test_lookup_ignores_zbmath_preprint_record():
+    # zbMATH returns its record of the preprint first; only the published one counts
+    session = FakeSession([_response([DOC_ARXIV_PREPRINT, DOC_WITH_ARXIV])])
+    result = lookup_by_arxiv_id("2606.01234", session=session)
+    assert result is not None
+    assert result.zbmath_de_number == "7266523"
+
+
+def test_lookup_preprint_only_returns_none():
+    session = FakeSession([_response([DOC_ARXIV_PREPRINT])])
+    assert lookup_by_arxiv_id("2606.01234", session=session) is None
 
 
 def test_lookup_not_found():

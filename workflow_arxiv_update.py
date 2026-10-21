@@ -16,7 +16,7 @@ from prefect.blocks.system import Secret
 
 from topic_overviews.arxiv_update import run_arxiv_update
 
-_SPARQL_ENDPOINT_URL = "https://query.portal.mardi4nfdi.de/sparql"
+_SPARQL_ENDPOINT_URL = "https://qlever.portal.mardi4nfdi.de/sparql"
 _RESEARCH_THEME_QID = "Q7266523"
 _LAKEFS_URL = os.environ.get("LAKEFS_URL", "https://lake-bioinfmed.zib.de")
 _LAKEFS_REPO = os.environ.get("LAKEFS_REPO", "mardi-fdo-data")

@@ -42,7 +42,7 @@ class KGClient:
         self._api_url = api_url
         self._bot_user = bot_user
         self._bot_password = bot_password
-        self._sparql_endpoint = sparql_endpoint or "https://query.portal.mardi4nfdi.de/sparql"
+        self._sparql_endpoint = sparql_endpoint or "https://qlever.portal.mardi4nfdi.de/sparql"
         self._session: requests.Session | None = None
 
     def _get_session(self) -> requests.Session:
@@ -82,9 +82,14 @@ class KGClient:
     def find_existing_paper(self, record: PaperRecord) -> str | None:
         """Return QID of an existing paper item matching any known identifier, or None.
 
-        Tries arXiv ID → DOI → OpenAlex ID → zbMATH ID in order and returns on
-        the first hit, so the same paper is never imported twice regardless of
-        which source provided it.
+        Tries the record's own identifiers first (arXiv ID, or zbMATH ID → DE
+        Number), then DOI → OpenAlex ID, and returns on the first hit, so the
+        same paper is never imported twice regardless of which source provided it.
+
+        arXiv items and published (zbMATH) items are separate on the portal and
+        usually share the publisher DOI. The shared-identifier lookups therefore
+        never match an item of the other kind: an arXiv record ignores items with
+        P225/P1451, every other record ignores items with P21.
 
         For Zenodo DOIs (10.5281/zenodo.*) an additional label-based SPARQL
         lookup is performed when all identifier checks fail.  Zenodo assigns a
@@ -97,19 +102,29 @@ class KGClient:
         endpoint (wikibaseintegrator defaults to Wikidata when its global config
         is not initialised in the current process).
         """
-        checks = [
-            (M.P_ARXIV_ID, record.arxiv_id),
+        if record.arxiv_id:
+            own_ids = [(M.P_ARXIV_ID, record.arxiv_id)]
+            exclude = (M.P_ZBMATH_ID, M.P_ZBMATH_DE_NUMBER)
+        else:
+            own_ids = [
+                (M.P_ZBMATH_ID, getattr(record, "zbmath_id", "")),
+                (M.P_ZBMATH_DE_NUMBER, getattr(record, "zbmath_de_number", "")),
+            ]
+            exclude = (M.P_ARXIV_ID,)
+        shared_ids = [
             (M.P_DOI, record.doi or ""),
             (M.P_OPENALEX_ID, getattr(record, "openalex_id", "")),
-            (M.P_ZBMATH_ID, getattr(record, "zbmath_id", "")),
-            (M.P_ZBMATH_DE_NUMBER, getattr(record, "zbmath_de_number", "")),
         ]
-        for prop, value in checks:
-            if not value:
-                continue
-            qid = self._sparql_find_by_value(prop, value)
-            if qid:
-                return qid
+        for prop, value in own_ids:
+            if value:
+                qid = self._sparql_find_by_value(prop, value)
+                if qid:
+                    return qid
+        for prop, value in shared_ids:
+            if value:
+                qid = self._sparql_find_by_value(prop, value, exclude_props=exclude)
+                if qid:
+                    return qid
 
         doi = record.doi or ""
         if doi.startswith("10.5281/zenodo.") and record.title:
@@ -123,11 +138,15 @@ class KGClient:
 
         return None
 
-    def _sparql_find_by_value(self, prop: str, value: str) -> str | None:
+    def _sparql_find_by_value(
+        self, prop: str, value: str, exclude_props: tuple[str, ...] = (),
+    ) -> str | None:
         """Return the first QID whose ``prop`` claim matches ``value``, or None.
 
+        Items that have any claim for one of ``exclude_props`` are skipped.
+
         Tries CirrusSearch (haswbstatement) first — it is updated in near
-        real-time by ElasticSearch and avoids the Blazegraph SPARQL lag.
+        real-time by ElasticSearch and avoids the SPARQL index lag.
         Falls back to a direct SPARQL query if the search returns nothing.
 
         Identifier values (DOI, arXiv ID, etc.) never contain quotes, so plain
@@ -141,7 +160,10 @@ class KGClient:
                 params={
                     "action": "query",
                     "list": "search",
-                    "srsearch": f"haswbstatement:{prop}={value}",
+                    "srsearch": " ".join(
+                        [f"haswbstatement:{prop}={value}"]
+                        + [f"-haswbstatement:{p}" for p in exclude_props]
+                    ),
                     "srnamespace": "120",
                     "srlimit": "1",
                     "format": "json",
@@ -157,10 +179,13 @@ class KGClient:
             log.warning("CirrusSearch lookup for %s=%r failed: %s", prop, value, exc)
 
         # --- SPARQL fallback (may lag by minutes after a write) ---
+        exclusions = "".join(
+            f"\n  FILTER NOT EXISTS {{ ?item wdt:{p} [] }}" for p in exclude_props
+        )
         query = f"""
 PREFIX wdt: <https://portal.mardi4nfdi.de/prop/direct/>
 SELECT ?item WHERE {{
-  ?item wdt:{prop} "{value}" .
+  ?item wdt:{prop} "{value}" .{exclusions}
 }}
 LIMIT 1
 """
@@ -293,16 +318,21 @@ LIMIT 1
         # re-processing a paper that was partially imported in an earlier run.
         existing_author_qids = set(item.get_value(M.P_AUTHOR) or [])
         has_date = bool(item.get_value(M.P_PUBLICATION_DATE))
+        # Never mix arXiv and zbMATH identifiers on one item (see find_existing_paper).
+        is_arxiv_item = bool(item.get_value(M.P_ARXIV_ID))
+        is_zbmath_item = bool(
+            item.get_value(M.P_ZBMATH_ID) or item.get_value(M.P_ZBMATH_DE_NUMBER)
+        )
 
         item.add_claim(M.P_INSTANCE_OF, value=M.Q_SCHOLARLY_ARTICLE)
         item.add_claim(M.P_PROFILE_TYPE, value=M.Q_PUBLICATION_PROFILE)
-        if record.arxiv_id:
+        if record.arxiv_id and not is_zbmath_item:
             item.add_claim(M.P_ARXIV_ID, value=record.arxiv_id)
         if getattr(record, "openalex_id", ""):
             item.add_claim(M.P_OPENALEX_ID, value=record.openalex_id)
-        if getattr(record, "zbmath_id", ""):
+        if getattr(record, "zbmath_id", "") and not is_arxiv_item:
             item.add_claim(M.P_ZBMATH_ID, value=record.zbmath_id)
-        if getattr(record, "zbmath_de_number", ""):
+        if getattr(record, "zbmath_de_number", "") and not is_arxiv_item:
             item.add_claim(M.P_ZBMATH_DE_NUMBER, value=record.zbmath_de_number)
         if record.doi:
             item.add_claim(M.P_DOI, value=record.doi)
@@ -366,24 +396,24 @@ LIMIT 1
         never permanently lost just because the paper was imported before they existed.
         """
         s = self._get_session()
+        claims = http_get(
+            s,
+            self._api_url,
+            params={"action": "wbgetclaims", "entity": paper_qid, "format": "json"},
+            timeout=30,
+        ).json().get("claims", {})
+        # Never mix arXiv and zbMATH identifiers on one item (see find_existing_paper).
+        is_arxiv_item = bool(claims.get(M.P_ARXIV_ID))
+        is_zbmath_item = bool(claims.get(M.P_ZBMATH_ID) or claims.get(M.P_ZBMATH_DE_NUMBER))
         candidate_ids = [
-            (M.P_ARXIV_ID, record.arxiv_id or ""),
+            (M.P_ARXIV_ID, "" if is_zbmath_item else record.arxiv_id or ""),
             (M.P_DOI, record.doi or ""),
             (M.P_OPENALEX_ID, getattr(record, "openalex_id", "") or ""),
-            (M.P_ZBMATH_ID, getattr(record, "zbmath_id", "") or ""),
+            (M.P_ZBMATH_ID, "" if is_arxiv_item else getattr(record, "zbmath_id", "") or ""),
         ]
         for prop, value in candidate_ids:
-            if not value:
-                continue
-            r = http_get(
-                s,
-                self._api_url,
-                params={"action": "wbgetclaims", "entity": paper_qid,
-                        "property": prop, "format": "json"},
-                timeout=30,
-            )
-            if r.json().get("claims", {}).get(prop):
-                continue  # already set
+            if not value or claims.get(prop):
+                continue  # nothing to write, or already set
             import json as _json
             http_post(
                 s,
@@ -397,6 +427,63 @@ LIMIT 1
                 timeout=30,
             )
             log.info("write_missing_identifiers: %s added %s=%s", paper_qid, prop, value)
+
+    def find_published_version(self, zb_record: PaperRecord) -> str | None:
+        """Return the QID of the published (zbMATH) item for ``zb_record``, or None.
+
+        Looks up the DE Number first: every existing P1676 target carries P1451,
+        while only a small fraction carries P225.
+        """
+        for prop, value in (
+            (M.P_ZBMATH_DE_NUMBER, zb_record.zbmath_de_number),
+            (M.P_ZBMATH_ID, zb_record.zbmath_id),
+        ):
+            if value:
+                qid = self._sparql_find_by_value(prop, value, exclude_props=(M.P_ARXIV_ID,))
+                if qid:
+                    return qid
+        return None
+
+    def find_arxiv_item(self, arxiv_id: str) -> str | None:
+        """Return the QID of the arXiv item for ``arxiv_id``, or None."""
+        if not arxiv_id:
+            return None
+        return self._sparql_find_by_value(
+            M.P_ARXIV_ID, arxiv_id,
+            exclude_props=(M.P_ZBMATH_ID, M.P_ZBMATH_DE_NUMBER),
+        )
+
+    def link_preprint(self, preprint_qid: str, published_qid: str) -> bool:
+        """Add ``preprint_qid --preprint of (P1676)--> published_qid`` if absent.
+
+        Returns True if a claim was written.
+        """
+        if not preprint_qid or not published_qid or preprint_qid == published_qid:
+            return False
+        s = self._get_session()
+        r = http_get(
+            s,
+            self._api_url,
+            params={"action": "wbgetclaims", "entity": preprint_qid,
+                    "property": M.P_PREPRINT_OF, "format": "json"},
+            timeout=30,
+        )
+        for c in r.json().get("claims", {}).get(M.P_PREPRINT_OF, []):
+            if (c.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id") == published_qid:
+                return False
+        http_post(
+            s,
+            self._api_url,
+            data={
+                "action": "wbcreateclaim", "entity": preprint_qid,
+                "snaktype": "value", "property": M.P_PREPRINT_OF,
+                "value": json.dumps({"entity-type": "item", "id": published_qid}),
+                "token": self._csrf(), "format": "json", "bot": "1",
+            },
+            timeout=30,
+        )
+        log.info("Linked %s --P1676--> %s", preprint_qid, published_qid)
+        return True
 
     def add_zbmath_enrichment(
         self,

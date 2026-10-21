@@ -18,7 +18,7 @@ from .kg import model as M
 
 log = logging.getLogger(__name__)
 
-_SPARQL_ENDPOINT_DEFAULT = "https://query.portal.mardi4nfdi.de/sparql"
+_SPARQL_ENDPOINT_DEFAULT = "https://qlever.portal.mardi4nfdi.de/sparql"
 _RESEARCH_THEME_QID_DEFAULT = "Q7266523"
 
 

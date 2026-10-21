@@ -84,10 +84,24 @@ def parse_documents_page(docs: list[dict]) -> list[PaperRecord]:
         license_urls = [u for u in (d.get("license") or []) if u]
         license_url = license_urls[0] if license_urls else ""
 
-        if not doi and arxiv_id:
-            doi = f"10.48550/arXiv.{arxiv_id}"
+        # On the portal, arXiv items and zbMATH items are separate; the arXiv
+        # item points to the published zbMATH item via "preprint of" (P1676).
+        # zbMATH also indexes the arXiv preprint itself (identifier "arXiv:...");
+        # such a record *is* the arXiv paper, so it carries no zbMATH IDs.
+        # A published record keeps its arXiv link only as preprint_arxiv_id.
+        preprint_arxiv_id = ""
+        if zbmath_id.startswith("arXiv:"):
+            arxiv_id = arxiv_id or zbmath_id.removeprefix("arXiv:")
+            zbmath_id = ""
+            zbmath_de_number = ""
+            if not doi and arxiv_id:
+                doi = f"10.48550/arXiv.{arxiv_id}"
+        else:
+            preprint_arxiv_id = arxiv_id
+            arxiv_id = ""
         records.append(PaperRecord(
             arxiv_id=arxiv_id,
+            preprint_arxiv_id=preprint_arxiv_id,
             title=title,
             abstract="",
             authors=authors,
@@ -158,10 +172,11 @@ def lookup_by_arxiv_id(
     *,
     session=None,
 ) -> PaperRecord | None:
-    """Return the zbMATH record for ``arxiv_id``, or None if not found.
+    """Return the zbMATH record of the *published* version of ``arxiv_id``, or None.
 
-    Used for inline enrichment of arXiv/OpenAlex papers: adds P225 (zbMATH ID)
-    and zbMATH author codes (for P676-based P16 resolution) to newly imported items.
+    zbMATH's own record of the arXiv preprint is ignored, so None means the
+    paper has not been published yet (as far as zbMATH knows). Used to link
+    newly imported arXiv items to their published version via P1676.
     """
     if not arxiv_id:
         return None
@@ -179,7 +194,7 @@ def lookup_by_arxiv_id(
         if not isinstance(docs, list):
             return None
         for record in parse_documents_page(docs):
-            if record.arxiv_id == arxiv_id:
+            if record.preprint_arxiv_id == arxiv_id and record.zbmath_de_number:
                 return record
         return None
     except Exception as exc:

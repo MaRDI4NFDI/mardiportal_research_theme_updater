@@ -95,6 +95,40 @@ def _zbmath_query_configs(config: Config, topics: list[Topic]) -> list[tuple[str
     return result
 
 
+def _link_preprint(kg, record, paper_qid: str, lookup_zb=None):
+    """Link an arXiv item and its published zbMATH item via P1676 (preprint of).
+
+    The two stay separate items; no zbMATH data is written onto the arXiv item.
+
+    - arXiv/OpenAlex record: ask zbMATH for the published version of its arXiv
+      ID and, if that item is already in the KG, link ``paper_qid`` to it.
+    - Published zbMATH record: if its arXiv preprint is already in the KG,
+      link that item to ``paper_qid``.
+
+    Returns the published zbMATH record (for citation linking), or None.
+    """
+    zb = None
+    try:
+        if record.arxiv_id and callable(lookup_zb):
+            zb = lookup_zb(record.arxiv_id)
+            if zb:
+                published_qid = kg.find_published_version(zb)
+                if published_qid:
+                    kg.link_preprint(paper_qid, published_qid)
+                else:
+                    log.info(
+                        "arXiv:%s is published as zbMATH %s (DE:%s), not yet in KG — no P1676 link",
+                        record.arxiv_id, zb.zbmath_id, zb.zbmath_de_number,
+                    )
+        elif getattr(record, "preprint_arxiv_id", ""):
+            arxiv_qid = kg.find_arxiv_item(record.preprint_arxiv_id)
+            if arxiv_qid:
+                kg.link_preprint(arxiv_qid, paper_qid)
+    except Exception as exc:
+        log.warning("Preprint linking for %s failed: %s", paper_qid, exc)
+    return zb
+
+
 def _process_record(
     record,
     source_label: str,
@@ -131,6 +165,8 @@ def _process_record(
             write_missing_ids = getattr(kg, "write_missing_identifiers", None)
             if callable(write_missing_ids) and not config.dry_run:
                 write_missing_ids(existing_qid, record)
+            if not config.dry_run:
+                _link_preprint(kg, record, existing_qid, lookup_zb)
             log.info(
                 "Skipping %s paper %s (%s): KG item %s already has P1963",
                 source_label, rid, record.title, existing_qid,
@@ -205,23 +241,7 @@ def _process_record(
                 )
             except Exception as exc:
                 log.warning("lakeFS upload failed for %s (%s): %s", paper_qid, record.arxiv_id, exc)
-        # Inline zbMATH enrichment for arXiv/OpenAlex records (adds P225 + P676 author resolution).
-        zb = None
-        if callable(lookup_zb) and record.arxiv_id and not record.zbmath_id:
-            zb = lookup_zb(record.arxiv_id)
-            if zb:
-                log.info(
-                    "zbMATH enrichment: found %s (DE:%s) for arXiv:%s — adding P225/P1451/P226 + P676 authors",
-                    zb.zbmath_id, zb.zbmath_de_number, record.arxiv_id,
-                )
-                kg.add_zbmath_enrichment(
-                    paper_qid, zb.zbmath_id, zb.zbmath_author_ids,
-                    zbmath_de_number=zb.zbmath_de_number,
-                    msc_codes=zb.msc_codes,
-                    zbmath_keywords=zb.zbmath_keywords,
-                    journal_title=zb.journal_title,
-                    license_url=zb.license_url,
-                )
+        zb = _link_preprint(kg, record, paper_qid, lookup_zb)
         # Citation linking: resolve cited papers already in the KG and write P223 claims.
         if callable(link_cites_fn):
             try:
