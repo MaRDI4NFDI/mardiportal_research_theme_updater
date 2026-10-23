@@ -211,7 +211,7 @@ def _process_record(
             return False
         keywords = keyworder(record, model=model, api_key=config.anthropic_api_key, llm=llm)
         paper_qid = kg.import_paper(
-            record, tldr=tldr, keywords=keywords, generated_by=M.Q_WORKFLOW,
+            record, tldr=tldr, keywords=keywords,
             tldr_model_qid=config.model_qid or None,
         )
         imported_qids.append(paper_qid)

@@ -111,11 +111,12 @@ def test_import_paper_without_tldr_sets_no_tldr_claim():
     assert not any(prop == "P1963" for prop, _ in item.claims)
 
 
-def test_import_paper_sets_generated_by_when_given():
+def test_import_paper_writes_no_item_level_generated_by():
     item = FakeItem()
-    mc = FakeMC(existing=[], item=item)
-    KGClient(mc).import_paper(PAPER, generated_by="Q7266558")
-    assert ("P1642", "Q7266558") in item.claims
+    kg = KGClient(FakeMC(existing=[], item=item))
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(PAPER)
+    assert not any(prop == "P1642" for prop, _ in item.claims)
 
 
 def test_import_paper_sets_one_keyword_claim_per_keyword():
