@@ -660,3 +660,18 @@ def test_already_imported_paper_still_gets_linked():
     )
     assert kg.imported == []
     assert kg.preprint_links == [("Q7", "Q42")]
+
+
+def test_resolve_qids_by_dois_matches_uppercase_kg_dois(monkeypatch):
+    from topic_overviews.kg import citation_linker
+    kg_dois = {"10.1093/IMANUM/DRQ042": "Q1", "10.1/ABC": "Q2"}
+    queried = []
+    def fake_lookup(prop, values, endpoint, session=None):
+        queried.append(list(values))
+        return {v: kg_dois[v] for v in values if v in kg_dois}
+    monkeypatch.setattr(citation_linker, "_batch_sparql_lookup", fake_lookup)
+    qids = citation_linker.resolve_qids_by_dois(
+        ["10.1093/imanum/drq042", "10.1/abc", "10.1/missing"], "http://sparql",
+    )
+    assert sorted(qids) == ["Q1", "Q2"]
+    assert len(queried) == 1                     # one batched query

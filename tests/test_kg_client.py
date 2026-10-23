@@ -87,7 +87,7 @@ def test_import_new_paper_writes_only_paper_statements():
     assert ("P31", "Q56887") in item.claims          # instance of scholarly article
     assert ("P1460", "Q5976449") in item.claims      # MaRDI publication profile type
     assert ("P21", "2401.00001") in item.claims         # arXiv id
-    assert ("P27", "10.1000/xyz") in item.claims        # DOI
+    assert ("P27", "10.1000/XYZ") in item.claims        # DOI
     assert ("P159", "A New Bound for Online Caching") in item.claims
     assert ("P28", "+2024-01-02T00:00:00Z") in item.claims
     assert ("P22", "math.OC") in item.claims
@@ -353,7 +353,7 @@ def test_find_existing_arxiv_record_skips_zbmath_items_on_shared_ids():
     calls = _recording_lookup(kg)
     kg.find_existing_paper(PAPER)
     assert calls[0] == ("P21", "2401.00001", ())
-    assert ("P27", "10.1000/xyz", ("P225", "P1451")) in calls
+    assert ("P27", "10.1000/XYZ", ("P225", "P1451")) in calls
 
 
 def test_find_existing_zbmath_record_skips_arxiv_items_on_shared_ids():
@@ -361,7 +361,7 @@ def test_find_existing_zbmath_record_skips_arxiv_items_on_shared_ids():
     calls = _recording_lookup(kg)
     kg.find_existing_paper(ZB_PAPER)
     assert calls[:2] == [("P225", "1541.68445", ()), ("P1451", "7860651", ())]
-    assert ("P27", "10.1000/xyz", ("P21",)) in calls
+    assert ("P27", "10.1000/XYZ", ("P21",)) in calls
     assert not any(prop == "P21" for prop, _, _ in calls)
 
 
@@ -409,3 +409,36 @@ def test_write_missing_identifiers_never_mixes_kinds(monkeypatch):
     posts = _fake_http(monkeypatch, kg, {"P1451": [{}]})   # a zbMATH item
     kg.write_missing_identifiers("Q500", PAPER)             # arXiv record matched it
     assert [p["property"] for p in posts] == ["P27"]        # DOI only, no P21
+
+
+# ---------------------------------------------------------------------------
+# DOIs are written uppercase, like everywhere else on the portal
+# ---------------------------------------------------------------------------
+
+def test_normalize_doi():
+    from topic_overviews.kg.client import normalize_doi
+    assert normalize_doi(" 10.1093/imanum/drq042 ") == "10.1093/IMANUM/DRQ042"
+    assert normalize_doi(None) == ""
+
+
+def test_import_paper_writes_doi_uppercase():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(PAPER)
+    assert ("P27", "10.1000/XYZ") in item.claims
+
+
+def test_import_paper_skips_case_variant_of_existing_doi():
+    item = FakeItem(values={"P27": ["10.1000/xyz"]})
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: "Q500"
+    kg.import_paper(PAPER)
+    assert not any(p == "P27" for p, _ in item.claims)
+
+
+def test_find_existing_looks_up_doi_uppercase():
+    kg = KGClient(FakeMC())
+    calls = _recording_lookup(kg)
+    kg.find_existing_paper(PAPER)
+    assert ("P27", "10.1000/XYZ", ("P225", "P1451")) in calls

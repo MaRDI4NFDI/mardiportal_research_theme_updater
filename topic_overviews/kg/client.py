@@ -27,6 +27,15 @@ def to_wbi_time(date: str) -> str:
     return f"+{date}T00:00:00Z"
 
 
+def normalize_doi(doi: str | None) -> str:
+    """Return ``doi`` in the portal's canonical form (uppercase), or "".
+
+    DOIs are case-insensitive and the portal stores them uppercased; writing
+    another case variant would add a second P27 claim for the same DOI.
+    """
+    return (doi or "").strip().upper()
+
+
 class KGClient:
     def __init__(
         self,
@@ -112,7 +121,7 @@ class KGClient:
             ]
             exclude = (M.P_ARXIV_ID,)
         shared_ids = [
-            (M.P_DOI, record.doi or ""),
+            (M.P_DOI, normalize_doi(record.doi)),
             (M.P_OPENALEX_ID, getattr(record, "openalex_id", "")),
         ]
         for prop, value in own_ids:
@@ -127,7 +136,7 @@ class KGClient:
                     return qid
 
         doi = record.doi or ""
-        if doi.startswith("10.5281/zenodo.") and record.title:
+        if doi.lower().startswith("10.5281/zenodo.") and record.title:
             qid = self._sparql_find_by_label(record.title)
             if qid:
                 log.info(
@@ -334,8 +343,10 @@ LIMIT 1
             item.add_claim(M.P_ZBMATH_ID, value=record.zbmath_id)
         if getattr(record, "zbmath_de_number", "") and not is_arxiv_item:
             item.add_claim(M.P_ZBMATH_DE_NUMBER, value=record.zbmath_de_number)
-        if record.doi:
-            item.add_claim(M.P_DOI, value=record.doi)
+        doi = normalize_doi(record.doi)
+        existing_dois = {normalize_doi(d) for d in item.get_value(M.P_DOI) or []}
+        if doi and doi not in existing_dois:
+            item.add_claim(M.P_DOI, value=doi)
         item.add_claim(M.P_TITLE, value=record.title)
         if record.published and not has_date:
             item.add_claim(M.P_PUBLICATION_DATE, value=to_wbi_time(record.published))
@@ -407,7 +418,7 @@ LIMIT 1
         is_zbmath_item = bool(claims.get(M.P_ZBMATH_ID) or claims.get(M.P_ZBMATH_DE_NUMBER))
         candidate_ids = [
             (M.P_ARXIV_ID, "" if is_zbmath_item else record.arxiv_id or ""),
-            (M.P_DOI, record.doi or ""),
+            (M.P_DOI, normalize_doi(record.doi)),
             (M.P_OPENALEX_ID, getattr(record, "openalex_id", "") or ""),
             (M.P_ZBMATH_ID, "" if is_arxiv_item else getattr(record, "zbmath_id", "") or ""),
         ]

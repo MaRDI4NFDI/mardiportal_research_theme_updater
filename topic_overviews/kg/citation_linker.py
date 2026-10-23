@@ -151,22 +151,22 @@ def resolve_qids_by_dois(
 ) -> list[str]:
     """Return KG QIDs for papers identified by DOI (P27).
 
-    Tries both the original case and lowercase to handle DOI case variation
-    between sources.
+    DOIs are case-insensitive but SPARQL string matching is not. The portal
+    stores DOIs uppercased, while sources (e.g. Crossref) often return them
+    lowercase, so each DOI is looked up as given, uppercased and lowercased.
     """
     if not dois:
         return []
-    # Build a case-insensitive map: lowercase DOI → original DOI from Crossref
-    lower_map = {d.lower(): d for d in dois}
-    # Try original case first
-    mapping = _batch_sparql_lookup(M.P_DOI, dois, sparql_endpoint, session)
-    # Also try lowercase for any unmatched DOIs
-    unmatched_lower = [d.lower() for d in dois if d not in mapping and d.lower() != d]
-    if unmatched_lower:
-        lower_mapping = _batch_sparql_lookup(M.P_DOI, unmatched_lower, sparql_endpoint, session)
-        for val, qid in lower_mapping.items():
-            if qid not in mapping.values():
-                mapping[lower_map.get(val, val)] = qid
+    # case variant → original DOI from the source
+    variants: dict[str, str] = {}
+    for d in dois:
+        for v in (d, d.upper(), d.lower()):
+            variants.setdefault(v, d)
+    found_by_variant = _batch_sparql_lookup(M.P_DOI, list(variants), sparql_endpoint, session)
+    mapping: dict[str, str] = {}
+    for val, qid in found_by_variant.items():
+        if qid not in mapping.values():
+            mapping.setdefault(variants.get(val, val), qid)
     found = len(mapping)
     log.info("Citation resolve (Crossref): %d/%d DOIs matched in KG", found, len(dois))
     return list(mapping.values())
