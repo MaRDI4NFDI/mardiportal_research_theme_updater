@@ -324,6 +324,9 @@ LIMIT 1
         # re-processing a paper that was partially imported in an earlier run.
         existing_author_qids = set(item.get_value(M.P_AUTHOR) or [])
         has_date = bool(item.get_value(M.P_PUBLICATION_DATE))
+        # Another source's spelling of the title (hyphen, case, punctuation)
+        # would otherwise be added as a second P159.
+        has_title = bool(item.get_value(M.P_TITLE))
         # Never mix arXiv and zbMATH identifiers on one item (see find_existing_paper).
         is_arxiv_item = bool(item.get_value(M.P_ARXIV_ID))
         is_zbmath_item = bool(
@@ -344,7 +347,8 @@ LIMIT 1
         existing_dois = {normalize_doi(d) for d in item.get_value(M.P_DOI) or []}
         if doi and doi not in existing_dois:
             item.add_claim(M.P_DOI, value=doi)
-        item.add_claim(M.P_TITLE, value=record.title)
+        if not has_title:
+            item.add_claim(M.P_TITLE, value=record.title)
         if record.published and not has_date:
             item.add_claim(M.P_PUBLICATION_DATE, value=to_wbi_time(record.published))
         for cat in record.categories:

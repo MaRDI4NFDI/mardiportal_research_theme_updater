@@ -443,3 +443,19 @@ def test_find_existing_looks_up_doi_uppercase():
     calls = _recording_lookup(kg)
     kg.find_existing_paper(PAPER)
     assert ("P27", "10.1000/XYZ", ("P225", "P1451")) in calls
+
+
+def test_import_paper_keeps_existing_title():
+    item = FakeItem(values={"P159": ["A New Bound for On-line Caching"]})
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: "Q500"
+    kg.import_paper(PAPER)
+    assert not any(p == "P159" for p, _ in item.claims)
+
+
+def test_import_new_paper_writes_title():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(PAPER)
+    assert ("P159", PAPER.title) in item.claims
