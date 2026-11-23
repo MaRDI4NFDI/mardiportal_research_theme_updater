@@ -64,4 +64,6 @@ def classify_paper(
             return [q for q in data.get("topics", []) if q in valid]
         except (ValueError, json.JSONDecodeError):
             continue
-    return []
+    # Not an empty list: "no theme" is a real decision that gets remembered
+    # (rejection store), an unreadable answer is not.
+    raise ValueError("classifier returned no parsable JSON after 2 attempts")

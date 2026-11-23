@@ -61,6 +61,8 @@ Configuration is environment-variable first.
 | `MEDIAWIKI_BOT_USER` / `MEDIAWIKI_BOT_PASSWORD` | empty | Bot credentials |
 | `WIKIBASE_URL` | empty | MaRDI Wikibase URL |
 | `SPARQL_ENDPOINT_URL` | empty | MaRDI SPARQL endpoint |
+| `TOPIC_OVERVIEWS_STATE_REPO` | `mardi-workflows-files` | lakeFS repo for run state (rejection store) |
+| `TOPIC_OVERVIEWS_STATE_BRANCH` | `main` | Branch of the state repo |
 
 ## Running
 
@@ -77,6 +79,21 @@ The default harvest path uses the arXiv search API sorted by submission date,
 running one search per distinct theme query. `harvest/arxiv_oai.py` remains as
 tested OAI-PMH support and shared record model code, but it is not the current
 CLI harvest mode.
+
+## Rejection store
+
+Papers the LLM placed in no theme are remembered in
+`topic-overviews/rejected.json` in the lakeFS state repo
+(`mardi-workflows-files`), so later runs skip the classification call for them.
+A decision is keyed by a fingerprint of the covering themes (QID, label,
+description), the model and the classifier prompt; changing any of these
+classifies the paper again. Entries older than the largest harvest window plus
+7 days are pruned. Keyword auto-classification still applies to stored papers.
+
+- Dry runs read the store but never write it.
+- `reclassify=True` (flow parameter) or `--reclassify` (CLI) classifies every
+  paper again; new decisions are still recorded.
+- If lakeFS is not configured or unreachable, every paper is classified as before.
 
 To limit a run to a single new paper inserted into the KG, set:
 

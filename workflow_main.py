@@ -23,6 +23,7 @@ from topic_overviews.kg.model_items import get_llm_model_identifier
 from topic_overviews.llm.client import assert_openai_compatible_server_available
 from topic_overviews.wiki.publisher import make_publisher
 from topic_overviews import pipeline
+from topic_overviews.rejection_store import load_store, save_store
 
 # Non-secret, deployment-specific constants.
 _MEDIAWIKI_API_URL = "https://portal.mardi4nfdi.de/w/api.php"
@@ -46,7 +47,13 @@ def topic_overviews(
     theme_max_papers: int = 100,
     dry_run: bool = False,
     themes_only: bool = False,
+    reclassify: bool = False,
 ) -> None:
+    """Run the pipeline.
+
+    reclassify: classify every paper again, ignoring the stored "no theme"
+    decisions from earlier runs (e.g. after changing the classifier prompt).
+    """
     logger = get_run_logger()
 
     result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
@@ -136,9 +143,21 @@ def topic_overviews(
         # State is intentionally fresh per run: find_existing_paper checks all
         # known identifiers against the KG to skip already-imported papers.
         state = State()
-        imported = pipeline.harvest_step(
-            config, state, topics=topics, kg=kg, model=model, publisher=publisher,
+        lakefs_args = dict(
+            url=config.lakefs_url, user=config.lakefs_user, password=config.lakefs_password,
+            repo=config.state_repo, branch=config.state_branch,
         )
+        rejections = load_store(**lakefs_args, skip_known=not reclassify)
+        try:
+            imported = pipeline.harvest_step(
+                config, state, topics=topics, kg=kg, model=model, publisher=publisher,
+                rejections=rejections,
+            )
+        finally:
+            # Saved even when the run stops early, so finished classifications
+            # are not repeated. Dry runs only read the store.
+            if not dry_run:
+                save_store(rejections, **lakefs_args, metadata={"commit": sha, "model": model})
         logger.info("Harvest complete — imported %d paper(s)", imported)
 
     pages = pipeline.ensure_theme_pages_step(

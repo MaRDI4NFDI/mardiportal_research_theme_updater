@@ -1,3 +1,4 @@
+import pytest
 from types import SimpleNamespace
 
 from topic_overviews.harvest.arxiv_oai import PaperRecord
@@ -46,5 +47,8 @@ def test_retries_once_on_bad_json_then_succeeds():
 
 
 def test_gives_up_after_retry():
+    # Raises rather than returning []: an unreadable answer is not a "no theme"
+    # decision and must not end up in the rejection store.
     client = FakeClient(["nope", "still nope"])
-    assert classify_paper(PAPER, TOPICS, model="m", api_key="x", client=client) == []
+    with pytest.raises(ValueError):
+        classify_paper(PAPER, TOPICS, model="m", api_key="x", client=client)
