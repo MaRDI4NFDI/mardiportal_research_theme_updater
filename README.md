@@ -52,7 +52,7 @@ Configuration is environment-variable first.
 | `TOPIC_OVERVIEWS_RESEARCH_THEME_QID` | `Q0` | Research-theme class, usually `Q7266523` |
 | `TOPIC_OVERVIEWS_LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic` or `openai` |
 | `TOPIC_OVERVIEWS_MODEL_QID` | empty | KG model item used for `P1642` provenance and runtime model lookup via `P1966` |
-| `TOPIC_OVERVIEWS_OPENAI_BASE_URL` | `https://ollama.zib.de/api` | OpenAI-compatible chat API base URL |
+| `TOPIC_OVERVIEWS_OPENAI_BASE_URL` | `https://llm.science-berlin.de/v1` | OpenAI-compatible chat API base URL |
 | `TOPIC_OVERVIEWS_OPENAI_API_KEY` | empty | Bearer token for the OpenAI-compatible API |
 | `TOPIC_OVERVIEWS_HARVEST_LIMIT` | `0` | Max new papers inserted into the KG; `0` means unlimited |
 | `TOPIC_OVERVIEWS_DRY_RUN` | `false` | Classify without writing |

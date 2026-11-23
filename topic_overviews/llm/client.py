@@ -108,19 +108,28 @@ class OpenAICompatibleLLMClient:
 def assert_openai_compatible_server_available(
     base_url: str,
     *,
+    api_key: str = "",
     retries: int = 2,
     delay: float = 3.0,
 ) -> None:
-    """Raise ValueError if the OpenAI-compatible server is not reachable.
+    """Raise ValueError if the OpenAI-compatible server is not usable.
 
-    Tries GET {base_url}/tags (the Ollama model-list endpoint) up to
-    1 + retries times, pausing delay seconds between attempts.
+    Lists the models via GET {base_url}/models (standard OpenAI API, served by
+    Ollama, LiteLLM, vLLM, ...), sending ``api_key`` as bearer token so a bad
+    key is caught before any paper is processed. Network and server errors are
+    retried up to ``retries`` times, ``delay`` seconds apart; a rejected key
+    (401/403) fails immediately.
     """
-    url = f"{base_url.rstrip('/')}/tags"
+    url = f"{base_url.rstrip('/')}/models"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     last_exc: Exception | None = None
     for attempt in range(1, retries + 2):
         try:
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code in (401, 403):
+                raise ValueError(
+                    f"LLM server at {base_url} rejected the API key (HTTP {resp.status_code})"
+                )
             resp.raise_for_status()
             log.info("LLM server reachable at %s", base_url)
             return

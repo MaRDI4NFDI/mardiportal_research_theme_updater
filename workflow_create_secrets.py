@@ -23,7 +23,7 @@ if __name__ == "__main__":
     print("Creating Prefect Secret blocks for topic-overviews\n")
     create("topic-overviews-bot-user",        "MediaWiki bot username (e.g. DoipBot)", secret=False)
     create("topic-overviews-bot-password",    "MediaWiki bot password")
-    create("topic-overviews-openai-api-key",  "ZIB Ollama API key (OLLAMA_API_KEY)")
+    create("topic-overviews-openai-api-key",  "API key for the LLM endpoint (llm.science-berlin.de)")
     create("topic-overviews-s2-api-key",      "Semantic Scholar API key (S2_API_KEY)")
     # lakeFS credentials reuse the shared "lakefs-user" / "lakefs-password" blocks
     # already present on the Prefect server — no separate creation needed.

@@ -29,8 +29,8 @@ _MEDIAWIKI_API_URL = "https://portal.mardi4nfdi.de/w/api.php"
 _WIKIBASE_URL = "https://portal.mardi4nfdi.de"
 _SPARQL_ENDPOINT_URL = "https://qlever.portal.mardi4nfdi.de/sparql"
 _RESEARCH_THEME_QID = "Q7266523"
-_MODEL_QID = "Q7269921"
-_OPENAI_BASE_URL = "https://ollama.zib.de/api"
+_MODEL_QID = "Q7456014"
+_OPENAI_BASE_URL = "https://llm.science-berlin.de/v1"
 _LAKEFS_URL = os.environ.get("LAKEFS_URL", "")
 _LAKEFS_REPO = os.environ.get("LAKEFS_REPO", "mardi-portal")
 _LAKEFS_BRANCH = os.environ.get("LAKEFS_BRANCH", "main")
@@ -102,7 +102,7 @@ def topic_overviews(
 
     model = ""
     if not themes_only:
-        assert_openai_compatible_server_available(_OPENAI_BASE_URL)
+        assert_openai_compatible_server_available(_OPENAI_BASE_URL, api_key=openai_api_key)
         model = get_llm_model_identifier(_MEDIAWIKI_API_URL, _MODEL_QID)
         logger.info("LLM model identifier: %s", model)
 

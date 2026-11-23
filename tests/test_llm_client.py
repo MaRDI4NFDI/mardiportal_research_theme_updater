@@ -1,4 +1,7 @@
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import requests
 
 import pytest
 
@@ -130,3 +133,46 @@ def test_make_llm_client_rejects_unknown_provider():
     cfg = load_config({"TOPIC_OVERVIEWS_LLM_PROVIDER": "nope"})
     with pytest.raises(ValueError):
         make_llm_client(cfg)
+
+
+def _models_response(status=200):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.raise_for_status = MagicMock()
+    if status >= 400:
+        resp.raise_for_status.side_effect = requests.exceptions.HTTPError(f"{status} error")
+    return resp
+
+
+def test_server_check_lists_models_with_bearer_token():
+    from topic_overviews.llm.client import assert_openai_compatible_server_available
+
+    with patch("topic_overviews.llm.client.requests.get", return_value=_models_response()) as get:
+        assert_openai_compatible_server_available("https://llm.example.org/v1/", api_key="sk-1")
+
+    get.assert_called_once()
+    assert get.call_args.args[0] == "https://llm.example.org/v1/models"
+    assert get.call_args.kwargs["headers"] == {"Authorization": "Bearer sk-1"}
+
+
+def test_server_check_fails_fast_on_rejected_key():
+    from topic_overviews.llm.client import assert_openai_compatible_server_available
+
+    with patch("topic_overviews.llm.client.requests.get", return_value=_models_response(401)) as get:
+        with pytest.raises(ValueError, match="rejected the API key"):
+            assert_openai_compatible_server_available("https://llm.example.org/v1", api_key="bad")
+
+    assert get.call_count == 1      # an auth error is not retried
+
+
+def test_server_check_retries_then_raises_when_unreachable():
+    from topic_overviews.llm.client import assert_openai_compatible_server_available
+
+    with patch(
+        "topic_overviews.llm.client.requests.get",
+        side_effect=requests.exceptions.ConnectionError("down"),
+    ) as get:
+        with pytest.raises(ValueError, match="unavailable"):
+            assert_openai_compatible_server_available("https://llm.example.org/v1", retries=2)
+
+    assert get.call_count == 3

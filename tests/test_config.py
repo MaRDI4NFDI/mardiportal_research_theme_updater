@@ -13,7 +13,7 @@ def test_load_config_reads_env_and_defaults():
     assert cfg.dry_run is True
     assert cfg.arxiv_query_property == "P1965"
     assert cfg.llm_provider == "anthropic"
-    assert cfg.openai_base_url == "https://ollama.zib.de/api"
+    assert cfg.openai_base_url == "https://llm.science-berlin.de/v1"
     assert cfg.openai_api_key == ""
 
 
