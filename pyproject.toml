@@ -9,10 +9,12 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "html2text>=2024.2",
     "lakefs>=0.7",
+    "mardiclient @ git+https://github.com/MaRDI4NFDI/mardiclient.git",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+workflows = ["prefect>=3"]
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -65,8 +65,8 @@ Configuration is environment-variable first.
 ## Running
 
 ```bash
-pip install -e '.[dev]'
-python -m pytest -q
+uv sync --extra dev --extra workflows   # or: pip install -e '.[dev,workflows]'
+uv run pytest -q
 
 TOPIC_OVERVIEWS_DRY_RUN=true python -m topic_overviews --dry-run
 python -m topic_overviews --themes-only
