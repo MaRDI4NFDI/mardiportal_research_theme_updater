@@ -364,12 +364,7 @@ LIMIT 1
                 item.add_claim(M.P_AUTHOR, value=author_qid, qualifiers=qual)
                 existing_author_qids.add(author_qid)
         if tldr:
-            if tldr_model_qid:
-                qual = Qualifiers()
-                qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=tldr_model_qid))
-                item.add_claim(M.P_TLDR, value=tldr, qualifiers=qual)
-            else:
-                item.add_claim(M.P_TLDR, value=tldr)
+            self._add_tldr_claim(item, tldr, tldr_model_qid)
         for kw in keywords or []:
             item.add_claim(M.P_KEYWORDS, value=kw)
         for kw in getattr(record, "zbmath_keywords", None) or []:
@@ -397,6 +392,26 @@ LIMIT 1
                 item.add_claim(M.P_PUBLISHED_IN, value=journal_qid)
 
         return item.write().id
+
+    @staticmethod
+    def _add_tldr_claim(item, tldr: str, tldr_model_qid: str | None) -> None:
+        if tldr_model_qid:
+            qual = Qualifiers()
+            qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=tldr_model_qid))
+            item.add_claim(M.P_TLDR, value=tldr, qualifiers=qual)
+        else:
+            item.add_claim(M.P_TLDR, value=tldr)
+
+    def add_tldr(self, paper_qid: str, tldr: str, tldr_model_qid: str | None = None) -> None:
+        """Write the TL;DR (P1963) onto an existing paper item.
+
+        The pipeline writes it as the last step of an import: a paper with a
+        TL;DR counts as fully imported (theme links included) and is skipped
+        on later runs.
+        """
+        item = self.mc.item.get(entity_id=paper_qid)
+        self._add_tldr_claim(item, tldr, tldr_model_qid)
+        item.write()
 
     def write_missing_identifiers(self, paper_qid: str, record: "PaperRecord") -> None:
         """Write identifier claims that are present on the record but absent from the KG item.

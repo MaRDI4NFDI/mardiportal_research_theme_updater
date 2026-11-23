@@ -32,10 +32,18 @@ class FakeKG:
         self.links = []
         self.paper_qids = {}      # any identifier string -> QID
         self.paper_tldrs = set()
+        self.tldrs = []           # (paper_qid, tldr, model_qid)
+        self.calls = []           # order of write operations
     def import_paper(self, record, tldr=None, keywords=None, tldr_model_qid=None):
+        self.calls.append("import")
         self.imported.append((record.arxiv_id, tldr, keywords)); return "Q999"
     def link_topic(self, topic_qid, paper_qid):
+        self.calls.append("link")
         self.links.append((topic_qid, paper_qid))
+    def add_tldr(self, paper_qid, tldr, tldr_model_qid=None):
+        self.calls.append("tldr")
+        self.tldrs.append((paper_qid, tldr, tldr_model_qid))
+        self.paper_tldrs.add(paper_qid)
     def get_paper_qid(self, arxiv_id):
         return self.paper_qids.get(arxiv_id)
     def find_existing_paper(self, record):
@@ -71,8 +79,10 @@ def test_harvest_step_imports_only_matched_and_updates_state():
                                   fetch=fake_fetch, classify=fake_classify,
                                   summarize=_summ("a short summary"), keyworder=_kw(["A", "B"]))
     assert count == 1
-    assert kg.imported == [("2401.00001", "a short summary", ["A", "B"])]   # tldr + keywords passed through
+    assert kg.imported == [("2401.00001", None, ["A", "B"])]   # keywords on import; TL;DR written last
     assert kg.links == [("Q11", "Q999")]            # paper Q999 added to topic Q11 via P265
+    assert kg.tldrs == [("Q999", "a short summary", None)]
+    assert kg.calls == ["import", "link", "tldr"]   # TL;DR marks the import as complete
     assert state.seen_ids == {"2401.00001", "2401.00002"}
 
 
@@ -109,6 +119,33 @@ def test_harvest_step_logs_inserted_qids(caplog):
     assert "Theme 'Online Algorithms' (Q11): 1 new paper(s)" in caplog.text
     assert "Q123 — Caching" in caplog.text
     assert "Harvest inserted 1 paper(s): Q123" in caplog.text
+
+
+def test_failed_theme_link_leaves_paper_without_tldr_so_next_run_retries():
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    kg = FakeKG()
+
+    def failing_link(topic_qid, paper_qid):
+        raise RuntimeError("edit conflict")
+    kg.link_topic = failing_link
+
+    run = lambda: pipeline.harvest_step(
+        cfg, State(), topics=TOPICS, kg=kg, model="test-model",
+        fetch=lambda config: iter([P1]),
+        classify=lambda *a, **k: ["Q11"],
+        summarize=_summ("a short summary"),
+        keyworder=_kw(["A"]),
+    )
+
+    assert run() == 0
+    assert kg.tldrs == []                    # not marked complete
+
+    # Next run: the item exists in the KG but has no TL;DR, so it is reprocessed.
+    kg.paper_qids["2401.00001"] = "Q999"
+    del kg.link_topic                        # back to the working FakeKG.link_topic
+    assert run() == 1
+    assert kg.links == [("Q11", "Q999")]
+    assert kg.tldrs == [("Q999", "a short summary", None)]
 
 
 def test_harvest_step_skips_papers_that_already_have_tldr(caplog):
@@ -262,7 +299,8 @@ def test_harvest_step_isolates_failing_paper():
     count = pipeline.harvest_step(cfg, state, topics=TOPICS, kg=kg, model="test-model",
                                   fetch=fake_fetch, classify=fake_classify, summarize=_summ(), keyworder=_kw())
     assert count == 1
-    assert kg.imported == [("2401.00001", "tl;dr", ["kw"])]
+    assert kg.imported == [("2401.00001", None, ["kw"])]
+    assert kg.tldrs == [("Q999", "tl;dr", None)]
     assert kg.links == [("Q11", "Q999")]
     assert "2401.00001" in state.seen_ids
     assert "2401.00002" in state.seen_ids
@@ -643,7 +681,8 @@ def test_zbmath_import_links_existing_arxiv_item():
         classify=lambda paper, topics, **kw: ["Q30"],
         summarize=_summ(), keyworder=_kw(),
     )
-    assert kg.imported == [("", "tl;dr", ["kw"])]     # published item gets no arXiv ID
+    assert kg.imported == [("", None, ["kw"])]        # published item gets no arXiv ID
+    assert kg.tldrs == [("Q999", "tl;dr", None)]
     assert kg.preprint_links == [("Q7", "Q999")]
 
 

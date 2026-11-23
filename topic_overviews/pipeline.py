@@ -210,11 +210,20 @@ def _process_record(
             log.warning("Skipping %s (%s): LLM returned empty TL;DR", rid, record.title)
             return False
         keywords = keyworder(record, model=model, api_key=config.anthropic_api_key, llm=llm)
-        paper_qid = kg.import_paper(
-            record, tldr=tldr, keywords=keywords,
-            tldr_model_qid=config.model_qid or None,
-        )
+        # The TL;DR is written last: a paper that has one is treated as fully
+        # imported and skipped on later runs, so it must not exist before the
+        # theme links do. If linking fails, the next run picks the paper up again.
+        paper_qid = kg.import_paper(record, keywords=keywords)
+        for topic_qid in matched:
+            kg.link_topic(topic_qid, paper_qid)
+            log.info(
+                "Linked %s to theme %s (%s)", paper_qid,
+                topic_label.get(topic_qid, topic_qid), topic_qid,
+            )
+        kg.add_tldr(paper_qid, tldr, config.model_qid or None)
         imported_qids.append(paper_qid)
+        for topic_qid in matched:
+            theme_added.setdefault(topic_qid, []).append((paper_qid, record.title))
         log.info("Inserted %s paper %s as KG item %s", source_label, rid, paper_qid)
         # Upload arXiv HTML5-derived Markdown to lakeFS (skip if not configured or no arXiv ID)
         if record.arxiv_id and config.lakefs_url and config.lakefs_user:
@@ -248,15 +257,12 @@ def _process_record(
                 link_cites_fn(paper_qid, record, zb)
             except Exception as exc:
                 log.warning("Citation linking for %s failed: %s", paper_qid, exc)
-        for topic_qid in matched:
-            kg.link_topic(topic_qid, paper_qid)
-            theme_added.setdefault(topic_qid, []).append((paper_qid, record.title))
-            log.info(
-                "Linked %s to theme %s (%s)", paper_qid,
-                topic_label.get(topic_qid, topic_qid), topic_qid,
-            )
-            if config.theme_max_papers:
-                kg.enforce_theme_limit(topic_qid, config.theme_max_papers)
+        if config.theme_max_papers:
+            for topic_qid in matched:
+                try:
+                    kg.enforce_theme_limit(topic_qid, config.theme_max_papers)
+                except Exception as exc:
+                    log.warning("Theme limit for %s failed: %s", topic_qid, exc)
     imported_titles.append(record.title)
     return True
 
