@@ -33,7 +33,7 @@ _RESEARCH_THEME_QID = "Q7266523"
 _MODEL_QID = "Q7456014"
 _OPENAI_BASE_URL = "https://llm.science-berlin.de/v1"
 _LAKEFS_URL = os.environ.get("LAKEFS_URL", "")
-_LAKEFS_REPO = os.environ.get("LAKEFS_REPO", "mardi-portal")
+_LAKEFS_REPO = os.environ.get("LAKEFS_REPO", "mardi-fdo-data")
 _LAKEFS_BRANCH = os.environ.get("LAKEFS_BRANCH", "main")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
