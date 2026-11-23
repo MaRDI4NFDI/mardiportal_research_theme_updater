@@ -13,6 +13,7 @@ from .kg.client import make_kg_client
 from .kg.model_items import get_llm_model_identifier
 from .wiki.publisher import make_publisher
 from . import pipeline
+from .rejection_store import load_store, save_store
 
 
 def main() -> None:
@@ -22,6 +23,10 @@ def main() -> None:
         "--themes-only", action="store_true",
         help="skip arXiv harvest/classify; only ensure theme pages + sitelinks "
              "(no Anthropic key needed) — handy for testing a new theme",
+    )
+    parser.add_argument(
+        "--reclassify", action="store_true",
+        help="classify every paper again, ignoring stored 'no theme' decisions",
     )
     args = parser.parse_args()
 
@@ -63,13 +68,22 @@ def main() -> None:
     publisher = None if config.dry_run else make_publisher(config)
 
     if not args.themes_only:
+        lakefs_args = dict(
+            url=config.lakefs_url, user=config.lakefs_user, password=config.lakefs_password,
+            repo=config.state_repo, branch=config.state_branch,
+        )
+        rejections = load_store(**lakefs_args, skip_known=not args.reclassify)
         try:
             imported = pipeline.harvest_step(
-                config, State(), topics=topics, kg=kg, model=model, publisher=publisher
+                config, State(), topics=topics, kg=kg, model=model, publisher=publisher,
+                rejections=rejections,
             )
         except pipeline.PipelineError as exc:
             log.error("Pipeline terminated: %s", exc)
             sys.exit(1)
+        finally:
+            if not config.dry_run:
+                save_store(rejections, **lakefs_args, metadata={"model": model})
         log.info("Imported %d papers", imported)
 
     pages = pipeline.ensure_theme_pages_step(

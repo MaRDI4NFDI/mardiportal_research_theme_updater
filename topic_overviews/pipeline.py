@@ -29,6 +29,7 @@ from .llm.client import LLMUnavailableError, make_llm_client
 from .wiki.page_builder import RESEARCH_THEME_STUB
 from .arxiv_to_md import fetch_and_convert
 from .lakefs_upload import upload_markdown, commit_upload
+from .rejection_store import PRUNE_MARGIN_DAYS, fingerprint as rejection_fingerprint
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +153,7 @@ def _process_record(
     theme_added: dict,
     lookup_zb=None,
     link_cites_fn=None,
+    rejections=None,
 ) -> bool:
     """Classify, optionally import, and link one record. Returns True if imported."""
     rid = record.record_id
@@ -191,6 +193,13 @@ def _process_record(
             )
         matched = [t.qid for t in keyword_matched]
     else:
+        fp = rejection_fingerprint(covering, model) if rejections is not None else ""
+        if rejections is not None and rejections.is_rejected(fp, rid):
+            log.info(
+                "Skipping %s paper %s (%s): classified into no theme on an earlier run",
+                source_label, rid, record.title,
+            )
+            return False
         log.info("Classifying %s paper %s (%s) with model %s", source_label, rid, record.title, model)
         matched = classify(
             record,
@@ -199,6 +208,11 @@ def _process_record(
             api_key=config.anthropic_api_key,
             llm=llm,
         )
+        if rejections is not None:
+            if matched:
+                rejections.discard(fp, rid)
+            else:
+                rejections.add(fp, rid)
     matched_labels = [f"{topic_label.get(q, q)} ({q})" for q in matched] if matched else []
     log.info(
         "Classified %s paper %s (%s) into: %s",
@@ -289,7 +303,14 @@ def harvest_step(
     llm=None,
     model: str | None = None,
     publisher=None,
+    rejections=None,
 ) -> int:
+    """Harvest, classify and import papers for all themes.
+
+    *rejections* is an optional ``RejectionStore``: papers it lists for the same
+    covering themes and model skip the LLM call, and new "no theme" decisions are
+    added to it. The caller loads and saves it.
+    """
     imported = 0
     imported_titles: list[str] = []
     imported_qids: list[str] = []
@@ -297,6 +318,15 @@ def harvest_step(
     topic_label = {t.qid: t.label for t in topics}
     llm = llm or make_llm_client(config)
     model = model or config.model_qid
+
+    if rejections is not None and topics:
+        max_days = max(_effective_since_days(t, config) for t in topics)
+        pruned = rejections.prune(max_days + PRUNE_MARGIN_DAYS)
+        log.info(
+            "Rejection store: %d entries (%d pruned as older than %d days)%s",
+            len(rejections), pruned, max_days + PRUNE_MARGIN_DAYS,
+            "" if rejections.skip_known else " — reclassify: not skipping known rejections",
+        )
 
     from .harvest.zbmath import lookup_by_arxiv_id as _zb_lookup
     _lookup_zb = lookup_zb if lookup_zb is not None else _zb_lookup
@@ -372,6 +402,7 @@ def harvest_step(
                 topic_label, imported_titles, imported_qids, theme_added,
                 lookup_zb=lookup_zb,
                 link_cites_fn=_link_cites,
+                rejections=rejections,
             )
         except LLMUnavailableError as exc:
             llm_failures += 1
@@ -530,6 +561,11 @@ def harvest_step(
         else:
             log.info("Theme %r (%s): 0 new paper(s)", topic.label, topic.qid)
 
+    if rejections is not None:
+        log.info(
+            "Rejection store: skipped %d LLM classification(s), recorded %d new rejection(s)",
+            rejections.hits, rejections.added,
+        )
     if imported_qids:
         log.info("Harvest inserted %d paper(s): %s", imported, ", ".join(imported_qids))
     else:

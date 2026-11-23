@@ -38,6 +38,9 @@ class Config:
     lakefs_password: str
     lakefs_repo: str
     lakefs_branch: str
+    # Run state (rejection store) lives in its own repo, next to other workflows' files.
+    state_repo: str = "mardi-workflows-files"
+    state_branch: str = "main"
 
 
 def _flag(value: str) -> bool:
@@ -76,4 +79,6 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         lakefs_password=env.get("LAKEFS_PASSWORD", ""),
         lakefs_repo=env.get("LAKEFS_REPO", ""),
         lakefs_branch=env.get("LAKEFS_BRANCH", "main"),
+        state_repo=env.get("TOPIC_OVERVIEWS_STATE_REPO", "mardi-workflows-files"),
+        state_branch=env.get("TOPIC_OVERVIEWS_STATE_BRANCH", "main"),
     )
