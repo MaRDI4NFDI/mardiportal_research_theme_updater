@@ -522,3 +522,52 @@ def test_link_citations_warns_when_reference_is_rejected(caplog):
 
     assert added == 1                       # the claim itself was written
     assert "Invalid CSRF token" in caplog.text
+
+
+class TestEnforceThemeLimitEdgeCases:
+    _client = TestEnforceThemeLimit._client
+
+    def _removed_claims(self, session) -> set[str]:
+        return set(session.post.call_args.kwargs["data"]["claim"].split("|"))
+
+    def test_undated_entries_are_never_removed(self):
+        pairs = [("Q1", ""), ("Q2", "+2024-06-01T00:00:00Z"), ("Q3", ""), ("Q4", "+2024-03-01T00:00:00Z")]
+        session = _mock_session(_make_p265_entities(pairs), _make_paper_entities(pairs))
+        removed = self._client(session).enforce_theme_limit("Q9999", max_papers=3)
+        assert removed == 1
+        assert self._removed_claims(session) == {"Q9999$Q4"}   # oldest dated, not an undated one
+
+    def test_only_undated_over_limit_removes_nothing(self, caplog):
+        pairs = [("Q1", ""), ("Q2", ""), ("Q3", "")]
+        session = _mock_session(_make_p265_entities(pairs), _make_paper_entities(pairs))
+        assert self._client(session).enforce_theme_limit("Q9999", max_papers=2) == 0
+        session.post.assert_not_called()
+        assert "undated" in caplog.text
+
+    def test_more_excess_than_dated_removes_all_dated_only(self):
+        pairs = [("Q1", ""), ("Q2", "+2024-06-01T00:00:00Z"), ("Q3", "")]
+        session = _mock_session(_make_p265_entities(pairs), _make_paper_entities(pairs))
+        assert self._client(session).enforce_theme_limit("Q9999", max_papers=1) == 1
+        assert self._removed_claims(session) == {"Q9999$Q2"}
+
+    def test_redirect_duplicate_removed_first_and_not_counted(self):
+        # Q5 redirects to Q2 (merged duplicate); both are linked from the theme.
+        pairs = [("Q1", "+2024-01-01T00:00:00Z"), ("Q5", "+2024-06-01T00:00:00Z"),
+                 ("Q2", "+2024-06-01T00:00:00Z"), ("Q3", "+2024-03-01T00:00:00Z")]
+        papers = _make_paper_entities(pairs)
+        papers["entities"]["Q5"]["id"] = "Q2"
+        papers["entities"]["Q5"]["redirects"] = {"from": "Q5", "to": "Q2"}
+        session = _mock_session(_make_p265_entities(pairs), papers)
+        # 3 distinct papers, limit 2: drop the redirect duplicate plus the oldest (Q1).
+        assert self._client(session).enforce_theme_limit("Q9999", max_papers=2) == 2
+        assert self._removed_claims(session) == {"Q9999$Q5", "Q9999$Q1"}
+
+    def test_duplicates_only_are_cleaned_up_when_distinct_count_fits(self):
+        pairs = [("Q1", "+2024-01-01T00:00:00Z"), ("Q5", "+2024-06-01T00:00:00Z"),
+                 ("Q2", "+2024-06-01T00:00:00Z")]
+        papers = _make_paper_entities(pairs)
+        papers["entities"]["Q5"]["id"] = "Q2"
+        session = _mock_session(_make_p265_entities(pairs), papers)
+        # 3 links but only 2 distinct papers: within the limit, only the duplicate goes.
+        assert self._client(session).enforce_theme_limit("Q9999", max_papers=2) == 1
+        assert self._removed_claims(session) == {"Q9999$Q5"}

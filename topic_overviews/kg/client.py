@@ -818,9 +818,17 @@ LIMIT 1
     def enforce_theme_limit(self, topic_qid: str, max_papers: int) -> int:
         """Unlink the oldest papers from a theme when it exceeds *max_papers*.
 
-        Fetches all P265 claims on the theme, resolves publication dates (P28)
-        for each linked paper, sorts oldest-first, and removes via wbremoveclaims
-        until the count is at or below the limit. Returns the number removed.
+        Fetches all P265 claims on the theme and the linked items' publication
+        dates (P28), then removes claims via wbremoveclaims:
+
+        1. Duplicate links first: several claims pointing to the same item, or
+           to an item and a redirect to it (merged duplicates). The claim on
+           the item's current QID is kept. Duplicates do not count as papers.
+        2. Then the oldest *dated* items until the theme is at the limit.
+           Undated entries (curated datasets, items without P28) are never
+           removed — their age is unknown — even if the theme stays above it.
+
+        Returns the number of claims removed.
         """
         if max_papers <= 0 or not self._api_url:
             return 0
@@ -835,18 +843,20 @@ LIMIT 1
         if len(p265) <= max_papers:
             return 0
 
-        # Map paper QID -> claim GUID
-        paper_guids: dict[str, str] = {}
+        # (linked QID, claim GUID) in claim order
+        links: list[tuple[str, str]] = []
         for c in p265:
             qid = (c.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id")
             if qid:
-                paper_guids[qid] = c["id"]
+                links.append((qid, c["id"]))
 
-        # Batch-fetch publication dates
-        paper_qids = list(paper_guids)
+        # Batch-fetch publication dates. The API follows redirects: the entity
+        # is returned under the requested QID with "id" set to the target.
+        linked_qids = list(dict.fromkeys(q for q, _ in links))
+        target: dict[str, str] = {}
         dates: dict[str, str] = {}
-        for i in range(0, len(paper_qids), 50):
-            batch = paper_qids[i : i + 50]
+        for i in range(0, len(linked_qids), 50):
+            batch = linked_qids[i : i + 50]
             r = http_get(
                 s,
                 self._api_url,
@@ -854,12 +864,36 @@ LIMIT 1
                 timeout=60,
             )
             for pqid, entity in r.json()["entities"].items():
+                tqid = entity.get("id") or pqid
+                target[pqid] = tqid
                 p28 = entity.get("claims", {}).get(M.P_PUBLICATION_DATE, [])
-                dates[pqid] = p28[0]["mainsnak"]["datavalue"]["value"]["time"] if p28 else ""
+                if p28:
+                    dates[tqid] = p28[0]["mainsnak"]["datavalue"]["value"]["time"]
 
-        # Oldest first
-        to_remove = sorted(paper_qids, key=lambda q: dates.get(q, ""))[: len(paper_qids) - max_papers]
-        guids = [paper_guids[q] for q in to_remove]
+        # One kept claim per item; prefer the claim on the item's current QID.
+        kept: dict[str, str] = {}      # target QID -> GUID of the kept claim
+        duplicates: list[str] = []
+        for qid, guid in sorted(links, key=lambda l: target.get(l[0], l[0]) != l[0]):
+            tqid = target.get(qid, qid)
+            if tqid in kept:
+                duplicates.append(guid)
+            else:
+                kept[tqid] = guid
+
+        excess = max(0, len(kept) - max_papers)
+        dated = sorted((q for q in kept if q in dates), key=lambda q: dates[q])
+        oldest = dated[:excess]
+        if excess > len(oldest):
+            log.warning(
+                "Theme %s: %d undated entr(y/ies) are never removed — theme stays at %d "
+                "entries, above the limit of %d",
+                topic_qid, len(kept) - len(dated), len(kept) - len(oldest), max_papers,
+            )
+        guids = duplicates + [kept[q] for q in oldest]
+        if not guids:
+            return 0
+        if duplicates:
+            log.info("Theme %s: removing %d duplicate link(s)", topic_qid, len(duplicates))
         r = http_post(
             s,
             self._api_url,
@@ -869,8 +903,9 @@ LIMIT 1
         )
         if r.json().get("success"):
             log.info(
-                "Theme %s: unlinked %d oldest paper(s) to enforce limit of %d",
-                topic_qid, len(guids), max_papers,
+                "Theme %s: unlinked %d oldest paper(s) and %d duplicate link(s) "
+                "to enforce limit of %d",
+                topic_qid, len(oldest), len(duplicates), max_papers,
             )
             return len(guids)
         log.warning("Theme %s: wbremoveclaims failed: %s", topic_qid, r.json().get("error"))
