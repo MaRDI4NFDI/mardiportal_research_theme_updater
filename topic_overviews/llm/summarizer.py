@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from ..harvest.arxiv_oai import PaperRecord
+from .client import LLMUnavailableError
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +42,8 @@ def summarize_paper(
             text = resp.content[0].text
         log.info("TL;DR raw response: %s", text[:200])
         return " ".join(text.split())
+    except LLMUnavailableError:
+        raise
     except Exception as exc:
         log.warning("TL;DR generation failed: %s", exc)
         return ""

@@ -24,3 +24,17 @@ def test_keywords_parses_json_array():
 def test_keywords_empty_on_bad_output():
     out = keywords_paper(PAPER, model="m", api_key="x", client=_client("no json here"))
     assert out == []
+
+
+def test_keywords_paper_propagates_llm_outage():
+    import pytest
+    from topic_overviews.llm.client import LLMUnavailableError
+    from topic_overviews.llm.keyworder import keywords_paper
+
+    class DownLLM:
+        def complete(self, *a, **k):
+            raise LLMUnavailableError("down")
+
+    paper = SimpleNamespace(title="T", abstract="A")
+    with pytest.raises(LLMUnavailableError):
+        keywords_paper(paper, model="m", api_key="", llm=DownLLM())

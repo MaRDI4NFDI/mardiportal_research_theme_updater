@@ -25,7 +25,7 @@ from .kg.citation_linker import (
 from .llm.topic_classifier import classify_paper
 from .llm.summarizer import summarize_paper
 from .llm.keyworder import keywords_paper
-from .llm.client import make_llm_client
+from .llm.client import LLMUnavailableError, make_llm_client
 from .wiki.page_builder import RESEARCH_THEME_STUB
 from .arxiv_to_md import fetch_and_convert
 from .lakefs_upload import upload_markdown, commit_upload
@@ -35,6 +35,11 @@ log = logging.getLogger(__name__)
 
 class PipelineError(Exception):
     """Fatal pipeline error — should terminate the run."""
+
+
+# Stop the run when this many papers in a row fail because the LLM server is
+# unreachable (each failure already includes the client's ~1 min of retries).
+MAX_CONSECUTIVE_LLM_FAILURES = 3
 
 
 def default_harvest(config: Config):
@@ -350,6 +355,34 @@ def harvest_step(
         if s2_qids:
             kg.link_citations(paper_qid, s2_qids, reference_qid=M.Q_SEMANTIC_SCHOLAR)
 
+    llm_failures = 0
+
+    def _process(record, source_label: str, covering: list[Topic], lookup_zb=None) -> bool:
+        """_process_record with the shared arguments, counting LLM outages.
+
+        Raises PipelineError after MAX_CONSECUTIVE_LLM_FAILURES papers in a row
+        failed because the LLM server was unreachable; any paper processed
+        without an outage resets the count.
+        """
+        nonlocal llm_failures
+        try:
+            did_import = _process_record(
+                record, source_label, covering, config, state, kg,
+                classify, summarize, keyworder, llm, model,
+                topic_label, imported_titles, imported_qids, theme_added,
+                lookup_zb=lookup_zb,
+                link_cites_fn=_link_cites,
+            )
+        except LLMUnavailableError as exc:
+            llm_failures += 1
+            if llm_failures >= MAX_CONSECUTIVE_LLM_FAILURES:
+                raise PipelineError(
+                    f"LLM unavailable for {llm_failures} papers in a row — stopping run: {exc}"
+                ) from exc
+            raise
+        llm_failures = 0
+        return did_import
+
     # --- zbMATH pass (highest quality — runs first; records carry author codes for P676 resolution) ---
     _fetch_zb = fetch_zb or (lambda qs, sd, **kw: fetch_zbmath_records(qs, sd))
     try:
@@ -382,12 +415,7 @@ def harvest_step(
                             record.oa_status = oa_enrichment["oa_status"]
                             record.concepts = oa_enrichment["concepts"]
                             record.openalex_keywords = oa_enrichment["openalex_keywords"]
-                    did_import = _process_record(
-                        record, "zbMATH", covering, config, state, kg,
-                        classify, summarize, keyworder, llm, model,
-                        topic_label, imported_titles, imported_qids, theme_added,
-                        link_cites_fn=_link_cites,
-                    )
+                    did_import = _process(record, "zbMATH", covering)
                 except PipelineError:
                     raise
                 except Exception as exc:
@@ -427,13 +455,7 @@ def harvest_step(
             query_imported = 0
             for record in _fetch_oa(oa_query, oa_since_days):
                 try:
-                    did_import = _process_record(
-                        record, "OpenAlex", covering, config, state, kg,
-                        classify, summarize, keyworder, llm, model,
-                        topic_label, imported_titles, imported_qids, theme_added,
-                        lookup_zb=_lookup_zb,
-                        link_cites_fn=_link_cites,
-                    )
+                    did_import = _process(record, "OpenAlex", covering, lookup_zb=_lookup_zb)
                 except PipelineError:
                     raise
                 except Exception as exc:
@@ -472,13 +494,7 @@ def harvest_step(
         try:
             for record in fetch(harvest_config):
                 try:
-                    did_import = _process_record(
-                        record, "arXiv", covering, config, state, kg,
-                        classify, summarize, keyworder, llm, model,
-                        topic_label, imported_titles, imported_qids, theme_added,
-                        lookup_zb=_lookup_zb,
-                        link_cites_fn=_link_cites,
-                    )
+                    did_import = _process(record, "arXiv", covering, lookup_zb=_lookup_zb)
                 except PipelineError:
                     raise
                 except Exception as exc:

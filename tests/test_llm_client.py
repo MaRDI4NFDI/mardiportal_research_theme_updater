@@ -77,7 +77,7 @@ def test_openai_compatible_llm_client_posts_chat_completion_request():
         "stream": False,
         "options": {"num_ctx": 32768},
     }
-    assert captured["timeout"] == 300
+    assert captured["timeout"] == (10, 300)   # (connect, read)
 
 
 def test_strip_thinking_removes_think_block():
@@ -176,3 +176,78 @@ def test_server_check_retries_then_raises_when_unreachable():
             assert_openai_compatible_server_available("https://llm.example.org/v1", retries=2)
 
     assert get.call_count == 3
+
+
+def _chat_resp(status=200, content="answer", headers=None):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.headers = headers or {}
+    resp.json.return_value = {"choices": [{"message": {"content": content}}]}
+    resp.raise_for_status = MagicMock()
+    if status >= 400:
+        resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            f"{status} error", response=resp
+        )
+    return resp
+
+
+def _complete_with(responses):
+    """Run complete() against scripted responses; return (result_or_exc, post_mock, sleep_mock)."""
+    client = OpenAICompatibleLLMClient(base_url="https://llm.example.org/v1", api_key="k")
+    with patch("topic_overviews.llm.client.requests.post", side_effect=responses) as post, \
+         patch("topic_overviews.llm.client.time.sleep") as sleep:
+        try:
+            result = client.complete("p", model="m", max_tokens=10)
+        except Exception as exc:  # returned so tests can assert on it
+            result = exc
+    return result, post, sleep
+
+
+def test_complete_retries_timeout_and_server_errors():
+    result, post, sleep = _complete_with([
+        requests.exceptions.ReadTimeout("slow"),
+        _chat_resp(503),
+        _chat_resp(200, "ok"),
+    ])
+    assert result == "ok"
+    assert post.call_count == 3
+    assert [c.args[0] for c in sleep.call_args_list] == [5, 15]
+
+
+def test_complete_honours_retry_after_on_rate_limit():
+    result, post, sleep = _complete_with([
+        _chat_resp(429, headers={"Retry-After": "30"}),
+        _chat_resp(200, "ok"),
+    ])
+    assert result == "ok"
+    assert [c.args[0] for c in sleep.call_args_list] == [30]
+
+
+def test_complete_does_not_retry_client_errors():
+    from topic_overviews.llm.client import LLMUnavailableError
+
+    for status in (400, 401):
+        result, post, sleep = _complete_with([_chat_resp(status)])
+        assert isinstance(result, ValueError)
+        assert not isinstance(result, LLMUnavailableError)   # a config problem, not an outage
+        assert post.call_count == 1
+        sleep.assert_not_called()
+
+
+def test_complete_raises_llm_unavailable_after_all_attempts():
+    from topic_overviews.llm.client import LLMUnavailableError
+
+    result, post, sleep = _complete_with(
+        [requests.exceptions.ConnectionError("down")] * 4
+    )
+    assert isinstance(result, LLMUnavailableError)
+    assert isinstance(result, ValueError)                     # callers catching ValueError still work
+    assert post.call_count == 4
+    assert [c.args[0] for c in sleep.call_args_list] == [5, 15, 45]
+
+
+def test_complete_retries_empty_answer_once_without_backoff():
+    result, post, sleep = _complete_with([_chat_resp(200, ""), _chat_resp(200, "")])
+    assert result == ""
+    assert post.call_count == 2
+    sleep.assert_not_called()

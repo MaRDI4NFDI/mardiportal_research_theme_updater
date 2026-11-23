@@ -714,3 +714,61 @@ def test_resolve_qids_by_dois_matches_uppercase_kg_dois(monkeypatch):
     )
     assert sorted(qids) == ["Q1", "Q2"]
     assert len(queried) == 1                     # one batched query
+
+
+def _papers(n):
+    return [PaperRecord(f"2401.1000{i}", f"Paper {i}", "abs", ["A"], ["cs.DS"], "2024-01-02", None)
+            for i in range(n)]
+
+
+def test_harvest_stops_after_consecutive_llm_outages():
+    import pytest
+    from topic_overviews.llm.client import LLMUnavailableError
+
+    calls = []
+    def down(paper, *a, **k):
+        calls.append(paper.arxiv_id)
+        raise LLMUnavailableError("down")
+
+    with pytest.raises(pipeline.PipelineError, match="3 papers in a row"):
+        pipeline.harvest_step(
+            _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"}), State(), topics=TOPICS, kg=FakeKG(),
+            model="m", fetch=lambda c: iter(_papers(5)), classify=down,
+            summarize=_summ(), keyworder=_kw(),
+        )
+    assert len(calls) == 3                      # papers 4 and 5 are not attempted
+
+
+def test_harvest_continues_when_llm_outages_are_not_consecutive():
+    from topic_overviews.llm.client import LLMUnavailableError
+
+    def flaky(paper, *a, **k):
+        if paper.arxiv_id[-1] in "024":         # papers 0, 2, 4 fail; 1, 3 succeed
+            raise LLMUnavailableError("blip")
+        return ["Q11"]
+
+    count = pipeline.harvest_step(
+        _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"}), State(), topics=TOPICS, kg=FakeKG(),
+        model="m", fetch=lambda c: iter(_papers(5)), classify=flaky,
+        summarize=_summ(), keyworder=_kw(),
+    )
+    assert count == 2
+
+
+def test_harvest_stops_when_tldr_generation_hits_outage():
+    import pytest
+    from topic_overviews.llm.client import LLMUnavailableError
+    from topic_overviews.llm.summarizer import summarize_paper
+
+    class DownLLM:
+        def complete(self, *a, **k):
+            raise LLMUnavailableError("down")
+
+    kg = FakeKG()
+    with pytest.raises(pipeline.PipelineError):
+        pipeline.harvest_step(
+            _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"}), State(), topics=TOPICS, kg=kg,
+            model="m", fetch=lambda c: iter(_papers(5)), classify=lambda *a, **k: ["Q11"],
+            summarize=summarize_paper, keyworder=_kw(), llm=DownLLM(),
+        )
+    assert kg.imported == []

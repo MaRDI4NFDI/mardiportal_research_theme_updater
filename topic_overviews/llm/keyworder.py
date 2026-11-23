@@ -5,6 +5,7 @@ import json
 import re
 
 from ..harvest.arxiv_oai import PaperRecord
+from .client import LLMUnavailableError
 
 _SYSTEM = (
     "Extract 4 to 6 short topical keywords/tags (1-3 words each, Title Case) that "
@@ -41,5 +42,7 @@ def keywords_paper(
         match = re.search(r"\[.*\]", text, re.DOTALL)
         data = json.loads(match.group(0)) if match else []
         return [str(k).strip() for k in data if str(k).strip()]
+    except LLMUnavailableError:
+        raise
     except Exception:
         return []

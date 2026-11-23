@@ -49,17 +49,48 @@ class AnthropicLLMClient:
         return text
 
 
+class LLMUnavailableError(ValueError):
+    """The LLM server could not be reached or kept failing after all retries.
+
+    Raised for outages (network errors, timeouts, 429, 5xx), not for requests
+    the server rejects outright (bad model name, bad key), so the pipeline can
+    tell a temporary outage from a configuration error.
+    """
+
+
+_RETRY_STATUS = {429, 500, 502, 503, 504}
+_RETRY_DELAYS = (5, 15, 45)          # pauses between the 4 attempts (~1 min total)
+_MAX_RETRY_AFTER = 120               # cap on a server-requested Retry-After wait
+_TIMEOUT = (10, 300)                 # (connect, read) seconds; thinking models answer slowly
+_EMPTY_ATTEMPTS = 2                  # empty answers are retried once, immediately
+
+
+def _retry_after(resp) -> float | None:
+    """Seconds from a numeric Retry-After header, capped; None if absent or unparsable."""
+    try:
+        return min(float(resp.headers.get("Retry-After", "")), _MAX_RETRY_AFTER)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class OpenAICompatibleLLMClient:
     base_url: str
     api_key: str
 
-    def complete(self, prompt: str, *, model: str, max_tokens: int) -> str:
-        log.info("LLM request → openai-compat/%s (prompt %d chars)", model, len(prompt))
-        for attempt in range(2):
+    def _post(self, prompt: str, model: str, max_tokens: int) -> requests.Response:
+        """POST the chat request, retrying outages with increasing pauses.
+
+        Raises LLMUnavailableError when every attempt hit a network error,
+        timeout, 429 or 5xx, and ValueError at once for any other HTTP error.
+        """
+        url = f"{self.base_url.rstrip('/')}/chat/completions"
+        attempts = len(_RETRY_DELAYS) + 1
+        for attempt in range(1, attempts + 1):
+            wait = _RETRY_DELAYS[attempt - 1] if attempt < attempts else 0
             try:
                 resp = requests.post(
-                    f"{self.base_url.rstrip('/')}/chat/completions",
+                    url,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
@@ -72,36 +103,59 @@ class OpenAICompatibleLLMClient:
                         "stream": False,
                         "options": {"num_ctx": 32768},
                     },
-                    timeout=300,
+                    timeout=_TIMEOUT,
                 )
                 resp.raise_for_status()
+                return resp
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status not in _RETRY_STATUS:
+                    raise ValueError(f"LLM request to {self.base_url} rejected: {exc}") from exc
+                error = exc
+                if exc.response is not None:
+                    wait = _retry_after(exc.response) or wait
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                error = exc
             except requests.exceptions.RequestException as exc:
-                raise ValueError(
-                    f"LLM server unavailable at {self.base_url}: {exc}"
-                ) from exc
-            data = resp.json()
+                raise ValueError(f"LLM request to {self.base_url} failed: {exc}") from exc
+            if attempt == attempts:
+                raise LLMUnavailableError(
+                    f"LLM server unavailable at {self.base_url} after {attempts} attempts: {error}"
+                ) from error
+            log.warning(
+                "LLM request failed (attempt %d/%d): %s — retrying in %.0fs",
+                attempt, attempts, error, wait,
+            )
+            time.sleep(wait)
+        raise AssertionError("unreachable")
+
+    def complete(self, prompt: str, *, model: str, max_tokens: int) -> str:
+        log.info("LLM request → openai-compat/%s (prompt %d chars)", model, len(prompt))
+        for attempt in range(1, _EMPTY_ATTEMPTS + 1):
+            data = self._post(prompt, model, max_tokens).json()
             choices = data.get("choices") or []
             if not choices:
-                log.warning("Empty choices on attempt %d", attempt + 1)
+                log.warning("Empty choices on attempt %d", attempt)
                 continue
             message = choices[0].get("message") or {}
             usage = data.get("usage") or {}
             reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)
             content = _strip_thinking(message.get("content") or "")
-            if not content:
-                if reasoning_tokens:
-                    log.warning(
-                        "content empty after stripping thinking blocks (attempt %d); "
-                        "model used %d reasoning tokens — thinking model may have "
-                        "exhausted budget before writing answer",
-                        attempt + 1, reasoning_tokens,
-                    )
-                else:
-                    log.info("content empty (attempt %d); message keys: %s", attempt + 1, list(message.keys()))
             if content:
                 log.info("LLM response ← %r", content[:300])
                 return content
-            log.warning("Empty response on attempt %d, retrying", attempt + 1)
+            if reasoning_tokens:
+                log.warning(
+                    "content empty after stripping thinking blocks (attempt %d); "
+                    "model used %d reasoning tokens — thinking model may have "
+                    "exhausted budget before writing answer",
+                    attempt, reasoning_tokens,
+                )
+            else:
+                log.warning(
+                    "Empty response on attempt %d; message keys: %s",
+                    attempt, list(message.keys()),
+                )
         return ""
 
 
