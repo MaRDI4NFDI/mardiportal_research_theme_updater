@@ -27,6 +27,12 @@ def to_wbi_time(date: str) -> str:
     return f"+{date}T00:00:00Z"
 
 
+def _api_error(result: dict) -> str:
+    """Readable text for a MediaWiki API error response."""
+    error = result.get("error") or {}
+    return error.get("info") or error.get("code") or str(error)
+
+
 def normalize_doi(doi: str | None) -> str:
     """Return ``doi`` in the portal's canonical form (uppercase), or "".
 
@@ -716,15 +722,18 @@ LIMIT 1
         paper_qid: str,
         cited_qids: list[str],
         reference_qid: str = "",
-    ) -> None:
+    ) -> int:
         """Write P223 (cites work) claims from paper_qid to each cited QID, idempotently.
 
         Reads existing P223 claims first to avoid duplicates on re-runs.
         If ``reference_qid`` is given, a ``P98=<reference_qid>`` ("stated in") reference
         block is added to each newly written claim.
+
+        The API reports rejected edits in the JSON body of a 200 response; those
+        are logged and not counted. Returns the number of claims written.
         """
         if not cited_qids:
-            return
+            return 0
         s = self._get_session()
         r = http_get(
             s,
@@ -762,10 +771,18 @@ LIMIT 1
                 },
                 timeout=30,
             )
+            result = resp.json()
+            if "error" in result:
+                log.warning(
+                    "link_citations: P223 %s → %s rejected: %s",
+                    paper_qid, cited_qid, _api_error(result),
+                )
+                continue
+            added += 1
             if reference_snaks:
-                claim_guid = (resp.json().get("claim") or {}).get("id")
+                claim_guid = (result.get("claim") or {}).get("id")
                 if claim_guid:
-                    http_post(
+                    ref_result = http_post(
                         s,
                         self._api_url,
                         data={
@@ -774,11 +791,16 @@ LIMIT 1
                             "token": self._csrf(), "format": "json", "bot": "1",
                         },
                         timeout=30,
-                    )
-            added += 1
+                    ).json()
+                    if "error" in ref_result:
+                        log.warning(
+                            "link_citations: reference %s on %s rejected: %s",
+                            reference_qid, claim_guid, _api_error(ref_result),
+                        )
         if added:
             log.info("link_citations: %s → %d new P223 claim(s)%s", paper_qid, added,
                      f" [stated in {reference_qid}]" if reference_qid else "")
+        return added
 
     def link_topic(self, topic_qid: str, paper_qid: str) -> None:
         """Add the paper to the topic's ``has part(s)`` (P265) list, idempotently.

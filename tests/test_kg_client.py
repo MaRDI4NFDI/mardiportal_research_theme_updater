@@ -1,3 +1,5 @@
+import json
+import logging
 from unittest.mock import MagicMock
 
 from topic_overviews.harvest.arxiv_oai import PaperRecord
@@ -459,3 +461,64 @@ def test_import_new_paper_writes_title():
     kg.find_existing_paper = lambda record: None
     kg.import_paper(PAPER)
     assert ("P159", PAPER.title) in item.claims
+
+
+class _CitationSession:
+    """Fake MediaWiki session for link_citations: no existing P223 claims;
+    wbcreateclaim / wbsetreference answer with the given per-call JSON."""
+
+    def __init__(self, create_results, reference_results=()):
+        self.create_results = list(create_results)
+        self.reference_results = list(reference_results)
+        self.created = []
+
+    def get(self, url, params=None, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if params.get("action") == "wbgetclaims":
+            resp.json.return_value = {"claims": {}}
+        else:  # csrf token
+            resp.json.return_value = {"query": {"tokens": {"csrftoken": "t"}}}
+        return resp
+
+    def post(self, url, data=None, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if data["action"] == "wbcreateclaim":
+            self.created.append(json.loads(data["value"])["id"])
+            resp.json.return_value = self.create_results.pop(0)
+        else:
+            resp.json.return_value = self.reference_results.pop(0)
+        return resp
+
+
+def _citation_client(session):
+    client = KGClient(FakeMC(), api_url="https://example.org/api")
+    client._session = session
+    return client
+
+
+def test_link_citations_does_not_count_claims_the_api_rejected(caplog):
+    session = _CitationSession([
+        {"success": 1, "claim": {"id": "Q1$a"}},
+        {"error": {"code": "modification-failed", "info": "Q3 is a redirect"}},
+    ])
+    with caplog.at_level(logging.INFO, logger="topic_overviews.kg.client"):
+        added = _citation_client(session).link_citations("Q1", ["Q2", "Q3"])
+
+    assert session.created == ["Q2", "Q3"]
+    assert added == 1
+    assert "Q3 is a redirect" in caplog.text
+    assert "1 new P223 claim(s)" in caplog.text
+
+
+def test_link_citations_warns_when_reference_is_rejected(caplog):
+    session = _CitationSession(
+        [{"success": 1, "claim": {"id": "Q1$a"}}],
+        [{"error": {"code": "badtoken", "info": "Invalid CSRF token"}}],
+    )
+    with caplog.at_level(logging.WARNING, logger="topic_overviews.kg.client"):
+        added = _citation_client(session).link_citations("Q1", ["Q2"], reference_qid="Q77")
+
+    assert added == 1                       # the claim itself was written
+    assert "Invalid CSRF token" in caplog.text
