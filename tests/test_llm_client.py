@@ -251,3 +251,22 @@ def test_complete_retries_empty_answer_once_without_backoff():
     assert result == ""
     assert post.call_count == 2
     sleep.assert_not_called()
+
+
+def test_complete_disables_thinking_only_when_asked():
+    client = OpenAICompatibleLLMClient(base_url="https://llm.example.org/v1", api_key="k")
+    with patch("topic_overviews.llm.client.requests.post",
+               side_effect=[_chat_resp(200, "a"), _chat_resp(200, "b")]) as post:
+        client.complete("p", model="m", max_tokens=10)
+        client.complete("p", model="m", max_tokens=10, thinking=False)
+
+    default_body, off_body = (c.kwargs["json"] for c in post.call_args_list)
+    assert "chat_template_kwargs" not in default_body
+    assert off_body["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_anthropic_client_accepts_thinking_flag():
+    fake = SimpleNamespace(messages=SimpleNamespace(
+        create=lambda **kw: SimpleNamespace(content=[SimpleNamespace(text="hi")])))
+    assert AnthropicLLMClient(api_key="k", client=fake).complete(
+        "p", model="m", max_tokens=5, thinking=False) == "hi"

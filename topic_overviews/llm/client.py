@@ -22,8 +22,14 @@ log = logging.getLogger(__name__)
 
 
 class LLMClient(Protocol):
-    def complete(self, prompt: str, *, model: str, max_tokens: int) -> str:
-        """Return text generated for ``prompt``."""
+    def complete(
+        self, prompt: str, *, model: str, max_tokens: int, thinking: bool = True
+    ) -> str:
+        """Return text generated for ``prompt``.
+
+        ``thinking=False`` asks a reasoning model to answer directly, without
+        its hidden reasoning step (much faster; fine for simple tasks).
+        """
 
 
 @dataclass
@@ -31,7 +37,10 @@ class AnthropicLLMClient:
     api_key: str
     client: object | None = None
 
-    def complete(self, prompt: str, *, model: str, max_tokens: int) -> str:
+    def complete(
+        self, prompt: str, *, model: str, max_tokens: int, thinking: bool = True
+    ) -> str:
+        # Extended thinking is never requested here, so ``thinking`` changes nothing.
         client = self.client
         if client is None:
             from anthropic import Anthropic
@@ -78,13 +87,27 @@ class OpenAICompatibleLLMClient:
     base_url: str
     api_key: str
 
-    def _post(self, prompt: str, model: str, max_tokens: int) -> requests.Response:
+    def _post(
+        self, prompt: str, model: str, max_tokens: int, thinking: bool = True
+    ) -> requests.Response:
         """POST the chat request, retrying outages with increasing pauses.
 
         Raises LLMUnavailableError when every attempt hit a network error,
         timeout, 429 or 5xx, and ValueError at once for any other HTTP error.
         """
         url = f"{self.base_url.rstrip('/')}/chat/completions"
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "stream": False,
+            "options": {"num_ctx": 32768},
+        }
+        if not thinking:
+            # Honoured by vLLM-served Qwen models behind the LiteLLM proxy
+            # (llm.science-berlin.de); only sent when thinking is switched off.
+            body["chat_template_kwargs"] = {"enable_thinking": False}
         attempts = len(_RETRY_DELAYS) + 1
         for attempt in range(1, attempts + 1):
             wait = _RETRY_DELAYS[attempt - 1] if attempt < attempts else 0
@@ -95,14 +118,7 @@ class OpenAICompatibleLLMClient:
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": max_tokens,
-                        "temperature": 0,
-                        "stream": False,
-                        "options": {"num_ctx": 32768},
-                    },
+                    json=body,
                     timeout=_TIMEOUT,
                 )
                 resp.raise_for_status()
@@ -129,10 +145,15 @@ class OpenAICompatibleLLMClient:
             time.sleep(wait)
         raise AssertionError("unreachable")
 
-    def complete(self, prompt: str, *, model: str, max_tokens: int) -> str:
-        log.info("LLM request → openai-compat/%s (prompt %d chars)", model, len(prompt))
+    def complete(
+        self, prompt: str, *, model: str, max_tokens: int, thinking: bool = True
+    ) -> str:
+        log.info(
+            "LLM request → openai-compat/%s (prompt %d chars%s)",
+            model, len(prompt), "" if thinking else ", thinking off",
+        )
         for attempt in range(1, _EMPTY_ATTEMPTS + 1):
-            data = self._post(prompt, model, max_tokens).json()
+            data = self._post(prompt, model, max_tokens, thinking).json()
             choices = data.get("choices") or []
             if not choices:
                 log.warning("Empty choices on attempt %d", attempt)

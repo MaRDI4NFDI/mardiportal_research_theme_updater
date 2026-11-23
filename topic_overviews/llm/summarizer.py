@@ -32,7 +32,8 @@ def summarize_paper(
     prompt = f"{_SYSTEM}\n\nTITLE: {paper.title}\nABSTRACT: {paper.abstract}"
     try:
         if llm is not None:
-            text = llm.complete(prompt, model=model, max_tokens=4096)
+            # Thinking off: same quality for this task, ~20x faster (tested Nov 2026).
+            text = llm.complete(prompt, model=model, max_tokens=4096, thinking=False)
         else:
             resp = client.messages.create(
                 model=model,
