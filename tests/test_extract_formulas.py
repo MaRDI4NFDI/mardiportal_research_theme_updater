@@ -114,31 +114,28 @@ def test_extract_formulas_llm_parses_response():
     from maintenance.extract_formulas import extract_formulas_llm
 
     formula_obj = {
-        "item_type": "mathematical object",
+        "formula_id": "F0001",
         "label": "Mass-energy equivalence",
-        "defining_formula": "E = mc^2",
-        "description_long": "Describes the equivalence of mass and energy.",
+        "latex": "E = mc^2",
         "formula_type": "equation",
         "classification": "standard",
-        "conditions": "",
-        "is_numbered": False,
-        "equation_number": "",
-        "symbols": [
-            {"symbol": "E", "represents": "energy", "type": "variable", "domain": "\\mathbb{R}"},
-            {"symbol": "m", "represents": "mass", "type": "variable", "domain": "\\mathbb{R}^+"},
-            {"symbol": "c", "represents": "speed of light", "type": "constant", "domain": "\\mathbb{R}^+"},
-        ],
-        "notation_variants": [],
-        "related_concepts": ["special relativity"],
+        "statement_role": "main_result",
+        "standalone_statement": True,
+        "provenance": {"citation_keys": [], "attribution_text": "Einstein"},
+        "established_name": "mass-energy equivalence",
+        "derived_from_formula_ids": [],
+        "conditions": [],
+        "symbols_defined": [],
+        "related_concepts": [{"label": "special relativity", "relation": "part_of"}],
         "msc_codes_suggested": [],
-        "cross_references": {"dlmf": "", "wikidata_qid": "Q35875"},
-        "source": {
-            "section": "Introduction",
-            "formula_as_found": "E = mc^2",
-            "source_text": "Einstein showed that E = mc^2.",
-        },
-        "confidence": {"formula_extraction": 0.99, "classification": 0.95, "description": 0.96},
-        "review_status": "unreviewed",
+        "occurrences": [
+            {
+                "source_id": "paper",
+                "section": "Introduction",
+                "equation_number": "",
+                "latex_as_found": "E = mc^2",
+            }
+        ],
     }
 
     fake_api_response = {
@@ -152,8 +149,10 @@ def test_extract_formulas_llm_parses_response():
         result = extract_formulas_llm("# Paper\n\n$$E = mc^2$$\n", "fake-key")
 
     assert len(result) == 1
+    assert result[0]["formula_id"] == "F0001"
     assert result[0]["label"] == "Mass-energy equivalence"
-    assert result[0]["review_status"] == "unreviewed"
+    assert result[0]["latex"] == "E = mc^2"
+    assert result[0]["occurrences"][0]["section"] == "Introduction"
 
 
 def test_extract_formulas_llm_raises_on_bad_json():
