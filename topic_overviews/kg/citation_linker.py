@@ -9,6 +9,8 @@ Strategy by source:
 from __future__ import annotations
 
 import logging
+import threading
+import time
 
 import requests
 
@@ -26,6 +28,25 @@ MARDI_API_URL = "https://portal.mardi4nfdi.de/w/api.php"
 _NON_CROSSREF_DOI_PREFIXES = ("10.48550/", "10.5281/")
 
 log = logging.getLogger(__name__)
+
+
+# Semantic Scholar allows 1 request per second per API key (all endpoints together).
+_S2_MIN_INTERVAL = 1.1
+_S2_MAX_ATTEMPTS = 3
+_S2_RETRY_PAUSE = 5.0
+_S2_MAX_RETRY_AFTER = 60.0
+_s2_lock = threading.Lock()
+_s2_last_request = 0.0
+
+
+def _s2_wait(*, sleep=time.sleep, clock=time.monotonic) -> None:
+    """Block until at least ``_S2_MIN_INTERVAL`` seconds passed since the last S2 request."""
+    global _s2_last_request
+    with _s2_lock:
+        pause = _s2_last_request + _S2_MIN_INTERVAL - clock()
+        if pause > 0:
+            sleep(pause)
+        _s2_last_request = clock()
 
 
 def crossref_user_agent(email: str = "") -> str:
@@ -245,8 +266,13 @@ def fetch_s2_references(
     *,
     api_key: str = "",
     session=None,
+    sleep=time.sleep,
+    clock=time.monotonic,
 ) -> list[dict]:
     """Fetch references for a paper from the Semantic Scholar API.
+
+    Requests are spaced at least 1.1 s apart (the API allows 1 per second); a 429
+    is retried up to 3 times, honoring Retry-After.
 
     Looks up by arXiv ID first, then DOI. Returns a list of dicts, each with
     keys ``arxiv_id``, ``doi``, ``openalex_id``, and ``title`` (any may be empty).
@@ -260,12 +286,23 @@ def fetch_s2_references(
         return []
 
     try:
-        resp = sess.get(
-            f"{S2_API_BASE}/paper/{paper_id}/references",
-            params={"fields": "externalIds,title", "limit": 500},
-            headers=headers,
-            timeout=30,
-        )
+        for attempt in range(1, _S2_MAX_ATTEMPTS + 1):
+            _s2_wait(sleep=sleep, clock=clock)
+            resp = sess.get(
+                f"{S2_API_BASE}/paper/{paper_id}/references",
+                params={"fields": "externalIds,title", "limit": 500},
+                headers=headers,
+                timeout=30,
+            )
+            if resp.status_code != 429 or attempt == _S2_MAX_ATTEMPTS:
+                break
+            try:
+                pause = float(resp.headers.get("Retry-After", ""))
+            except ValueError:
+                pause = _S2_RETRY_PAUSE
+            pause = min(max(pause, _S2_RETRY_PAUSE), _S2_MAX_RETRY_AFTER)
+            log.info("Semantic Scholar rate limit for %s; retrying in %.0fs", paper_id, pause)
+            sleep(pause)
         if resp.status_code == 404:
             return []
         resp.raise_for_status()
