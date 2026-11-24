@@ -10,7 +10,7 @@ import json
 import logging
 import requests
 
-from ..http_utils import http_get, http_post
+from ..http_utils import LookupUnavailableError, http_get, http_post
 
 from wikibaseintegrator.datatypes import ExternalID as WBExternalID
 from wikibaseintegrator.datatypes import Item as WBItem
@@ -24,7 +24,13 @@ log = logging.getLogger(__name__)
 
 
 def to_wbi_time(date: str) -> str:
-    return f"+{date}T00:00:00Z"
+    """Wikibase time string for ``YYYY``, ``YYYY-MM`` or ``YYYY-MM-DD``.
+
+    A missing month or day is written as 00, which WikibaseIntegrator stores
+    with year or month precision instead of a made-up day.
+    """
+    year, month, day = (date.split("-") + ["00", "00"])[:3]
+    return f"+{year}-{month}-{day}T00:00:00Z"
 
 
 def _api_error(result: dict) -> str:
@@ -40,6 +46,38 @@ def normalize_doi(doi: str | None) -> str:
     another case variant would add a second P27 claim for the same DOI.
     """
     return (doi or "").strip().upper()
+
+
+def _license_item(license_url: str) -> str:
+    """License item for a license URL; "" (and a warning) if the URL is not mapped.
+
+    P163 holds license items, not URLs. An unmapped license is left out rather
+    than written in the wrong form; the warning shows which URLs the table lacks.
+    """
+    qid = M.license_qid(license_url)
+    if not qid:
+        log.warning("No license item for %r — P163 not written (extend model.LICENSE_QIDS)", license_url)
+    return qid
+
+
+def _description(record) -> str:
+    """Description for a new item, as the other importers write it ("" if none)."""
+    if getattr(record, "arxiv_id", ""):
+        return "scientific article from arXiv"
+    de_number = getattr(record, "zbmath_de_number", "")
+    if de_number:
+        return f"scientific article; zbMATH DE number {de_number}"
+    return ""
+
+
+def _is_description_clash(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "already has label" in text and "same description" in text
+
+
+def _distinct_description(record, description: str) -> str:
+    identifier = getattr(record, "arxiv_id", "") or getattr(record, "zbmath_id", "")
+    return f"{description} ({identifier})" if identifier else description
 
 
 def paper_doi(record) -> str:
@@ -72,6 +110,9 @@ class KGClient:
         self._bot_password = bot_password
         self._sparql_endpoint = sparql_endpoint or "https://qlever.portal.mardi4nfdi.de/sparql"
         self._session: requests.Session | None = None
+        # Set by import_paper: True when a lookup failed during the import (e.g. an
+        # author search hit a portal outage), so the item is not yet complete.
+        self.last_import_incomplete = False
 
     def _get_session(self) -> requests.Session:
         if self._session is None:
@@ -185,6 +226,7 @@ class KGClient:
         Identifier values (DOI, arXiv ID, etc.) never contain quotes, so plain
         string interpolation into the SPARQL query is safe here.
         """
+        failures: list[Exception] = []
         # --- CirrusSearch (fast, near real-time) ---
         try:
             resp = http_get(
@@ -209,6 +251,7 @@ class KGClient:
                 title = hits[0]["title"]
                 return title.split(":", 1)[-1]
         except Exception as exc:
+            failures.append(exc)
             log.warning("CirrusSearch lookup for %s=%r failed: %s", prop, value, exc)
 
         # --- SPARQL fallback (may lag by minutes after a write) ---
@@ -235,8 +278,15 @@ LIMIT 1
                 uri = bindings[0]["item"]["value"]
                 return uri.rstrip("/").rsplit("/", 1)[-1]
         except Exception as exc:
+            failures.append(exc)
             log.warning("SPARQL lookup for %s=%r failed: %s", prop, value, exc)
 
+        if len(failures) == 2:
+            # Neither lookup could be asked. "Not found" would make the caller
+            # create a duplicate item, so the paper is retried on the next run.
+            raise LookupUnavailableError(
+                f"could not look up {prop}={value!r}: {failures[-1]}"
+            ) from failures[-1]
         return None
 
     def _sparql_find_by_label(self, title: str) -> str | None:
@@ -337,12 +387,18 @@ LIMIT 1
         # NOTE: use BARE local MaRDI PIDs/QIDs. A "wdt:"/"wd:" prefix makes
         # mardiclient interpret the id as a *Wikidata* one and remote-map it,
         # which both picks the wrong property and 404s. Our model.py ids are local.
+        self.last_import_incomplete = False
         existing_qid = self.find_existing_paper(record)
+        description = ""
         if existing_qid:
             item = self.mc.item.get(entity_id=existing_qid)
         else:
             item = self.mc.item.new()
             item.labels.set("en", record.title[:250])
+            # Only new items get a description; an existing item keeps its own.
+            description = _description(record)
+            if description:
+                item.descriptions.set("en", description)
 
         # Collect already-set single-value properties to avoid duplicates when
         # re-processing a paper that was partially imported in an earlier run.
@@ -383,7 +439,15 @@ LIMIT 1
         for name in record.authors:
             # Name strings are stored as "First Last" (zbMATH gives "Last, First").
             item.add_claim(M.P_AUTHOR_NAME_STRING, value=normalize_author_name(name))
-            author_qid = self._resolve_author(name, zbmath_codes.get(name))
+            author_qid = None
+            if not self.last_import_incomplete:  # after one outage, stop asking for this paper
+                try:
+                    author_qid = self._resolve_author(name, zbmath_codes.get(name))
+                except LookupUnavailableError as exc:
+                    # An outage is not "unknown person": keep the item incomplete so the
+                    # next run asks again instead of leaving the author link missing.
+                    log.warning("Author %r not resolved, portal unavailable: %s", name, exc)
+                    self.last_import_incomplete = True
             if author_qid and author_qid not in existing_author_qids:
                 qual = Qualifiers()
                 qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=M.Q_WORKFLOW))
@@ -410,14 +474,27 @@ LIMIT 1
             item.add_claim(M.P_OA_STATUS, value=M.OA_STATUS_MAP[oa_status])
         license_url = getattr(record, "license_url", "") or ""
         if license_url:
-            item.add_claim(M.P_LICENSE, value=license_url)
+            license_item = _license_item(license_url)
+            if license_item:
+                item.add_claim(M.P_LICENSE, value=license_item)
         journal_title = getattr(record, "journal_title", "") or ""
         if journal_title:
             journal_qid = self._resolve_journal_qid(journal_title)
             if journal_qid:
                 item.add_claim(M.P_PUBLISHED_IN, value=journal_qid)
 
-        return item.write().id
+        try:
+            return item.write().id
+        except Exception as exc:
+            # The portal allows one item per label+description pair. A different
+            # paper with the same title and description is not this paper (it was
+            # not found above), so make the description unique instead of losing it.
+            if description and _is_description_clash(exc):
+                unique = _distinct_description(record, description)
+                log.info("Description %r already used with this label — using %r", description, unique)
+                item.descriptions.set("en", unique)
+                return item.write().id
+            raise
 
     def _resolve_author(self, name: str, zbmath_author_id: str | None = None) -> str | None:
         """QID of the person item for an author, or None.
@@ -571,7 +648,7 @@ LIMIT 1
         """
         s = self._get_session()
 
-        def _write_if_missing(prop: str, value: str, label: str) -> None:
+        def _write_if_missing(prop: str, value: str, label: str, is_item: bool = False) -> None:
             r = http_get(
                 s,
                 self._api_url,
@@ -586,7 +663,9 @@ LIMIT 1
                     data={
                         "action": "wbcreateclaim", "entity": paper_qid,
                         "snaktype": "value", "property": prop,
-                        "value": json.dumps(value),
+                        "value": json.dumps(
+                            {"entity-type": "item", "id": value} if is_item else value
+                        ),
                         "token": self._csrf(), "format": "json", "bot": "1",
                     },
                     timeout=30,
@@ -598,7 +677,9 @@ LIMIT 1
         if zbmath_de_number:
             _write_if_missing(M.P_ZBMATH_DE_NUMBER, zbmath_de_number, "P1451")
         if license_url:
-            _write_if_missing(M.P_LICENSE, license_url, "P163")
+            license_item = _license_item(license_url)
+            if license_item:
+                _write_if_missing(M.P_LICENSE, license_item, "P163", is_item=True)
         if msc_codes:
             r = http_get(
                 s,
@@ -724,8 +805,9 @@ LIMIT 1
             )
 
     def add_crossref_license(self, paper_qid: str, license_url: str) -> None:
-        """Write P163 (license URL) from Crossref if not already set."""
-        if not license_url:
+        """Write P163 (license item) from a Crossref license URL if not already set."""
+        license_item = _license_item(license_url) if license_url else ""
+        if not license_item:
             return
         s = self._get_session()
         r = http_get(
@@ -736,18 +818,25 @@ LIMIT 1
             timeout=30,
         )
         if not r.json().get("claims", {}).get(M.P_LICENSE):
-            http_post(
+            resp = http_post(
                 s,
                 self._api_url,
                 data={
                     "action": "wbcreateclaim", "entity": paper_qid,
                     "snaktype": "value", "property": M.P_LICENSE,
-                    "value": json.dumps(license_url),
+                    "value": json.dumps({"entity-type": "item", "id": license_item}),
                     "token": self._csrf(), "format": "json", "bot": "1",
                 },
                 timeout=30,
             )
-            log.info("Added P163 (license) to %s: %s", paper_qid, license_url)
+            result = resp.json()
+            if "error" in result:  # the API reports rejected edits in a 200 response
+                log.warning(
+                    "add_crossref_license: P163 %s → %s rejected: %s",
+                    paper_qid, license_item, _api_error(result),
+                )
+                return
+            log.info("Added P163 (license) to %s: %s (%s)", paper_qid, license_item, license_url)
 
     def link_citations(
         self,

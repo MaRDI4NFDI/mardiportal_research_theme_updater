@@ -233,13 +233,22 @@ def _process_record(
         # imported and skipped on later runs, so it must not exist before the
         # theme links do. If linking fails, the next run picks the paper up again.
         paper_qid = kg.import_paper(record, keywords=keywords)
+        # True when a lookup failed during the import (portal outage), e.g. an author
+        # could not be searched. The TL;DR is then withheld so the next run completes it.
+        incomplete = getattr(kg, "last_import_incomplete", False) is True
         for topic_qid in matched:
             kg.link_topic(topic_qid, paper_qid)
             log.info(
                 "Linked %s to theme %s (%s)", paper_qid,
                 topic_label.get(topic_qid, topic_qid), topic_qid,
             )
-        kg.add_tldr(paper_qid, tldr, config.model_qid or None)
+        if incomplete:
+            log.warning(
+                "Item %s (%s) is incomplete (portal lookups failed): TL;DR withheld, "
+                "it is completed on the next run", paper_qid, record.title,
+            )
+        else:
+            kg.add_tldr(paper_qid, tldr, config.model_qid or None)
         imported_qids.append(paper_qid)
         for topic_qid in matched:
             theme_added.setdefault(topic_qid, []).append((paper_qid, record.title))

@@ -45,6 +45,15 @@ class FakeItem:
     @property
     def labels(self): return FakeItem._Labels(self)
 
+    class _Descriptions:
+        def __init__(self, outer): self.outer = outer
+        def set(self, language, value): self.outer.description = (language, value)
+
+    description = None
+
+    @property
+    def descriptions(self): return FakeItem._Descriptions(self)
+
     def add_claim(self, prop, value=None, action="append_or_replace", qualifiers=None):
         self.claims.append((prop, value))
 
@@ -102,14 +111,18 @@ def test_import_new_paper_writes_only_paper_statements():
 def test_import_paper_sets_tldr_when_given():
     item = FakeItem()
     mc = FakeMC(existing=[], item=item)
-    KGClient(mc).import_paper(PAPER, tldr="A one-sentence summary.")
+    kg = KGClient(mc)
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(PAPER, tldr="A one-sentence summary.")
     assert ("P1963", "A one-sentence summary.") in item.claims
 
 
 def test_import_paper_without_tldr_sets_no_tldr_claim():
     item = FakeItem()
     mc = FakeMC(existing=[], item=item)
-    KGClient(mc).import_paper(PAPER)
+    kg = KGClient(mc)
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(PAPER)
     assert not any(prop == "P1963" for prop, _ in item.claims)
 
 
@@ -124,7 +137,9 @@ def test_import_paper_writes_no_item_level_generated_by():
 def test_import_paper_sets_one_keyword_claim_per_keyword():
     item = FakeItem()
     mc = FakeMC(existing=[], item=item)
-    KGClient(mc).import_paper(PAPER, keywords=["Caching", "Online", "Predictions"])
+    kg = KGClient(mc)
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(PAPER, keywords=["Caching", "Online", "Predictions"])
     assert ("P1964", "Caching") in item.claims
     assert ("P1964", "Online") in item.claims
     assert ("P1964", "Predictions") in item.claims
@@ -299,6 +314,7 @@ def test_import_paper_without_arxiv_id_writes_no_p21():
     from topic_overviews.kg import model as M
 
     kg = KGClient(FakeMC())
+    kg.find_existing_paper = lambda record: None
     record = PaperRecord(
         arxiv_id="",
         title="OpenAlex Only Paper",
@@ -693,3 +709,267 @@ def test_author_without_zbmath_match_falls_back_to_name_resolver():
     kg.import_paper(_zb_record(["Doe, Jane"], [("Doe, Jane", "doe.jane.1")]))
     resolver.resolve.assert_called_once_with("Doe, Jane")
     assert ("P16", "Q888") in item.claims
+
+
+# ---------------------------------------------------------------------------
+# Portal outages are not "not found" (lookups raise; the import stays incomplete)
+# ---------------------------------------------------------------------------
+
+def _break_http(monkeypatch):
+    import topic_overviews.kg.client as client_mod
+
+    def down(*args, **kwargs):
+        raise RuntimeError("503 Service Unavailable")
+    monkeypatch.setattr(client_mod, "http_get", down)
+
+
+def test_lookup_raises_when_both_search_and_sparql_fail(monkeypatch):
+    import pytest
+    from topic_overviews.http_utils import LookupUnavailableError
+    _break_http(monkeypatch)
+    kg = KGClient(FakeMC(), api_url="http://api")
+    with pytest.raises(LookupUnavailableError):
+        kg._sparql_find_by_value("P21", "2401.00001")
+
+
+def test_lookup_returns_none_when_only_one_source_fails(monkeypatch):
+    import topic_overviews.kg.client as client_mod
+
+    class Resp:
+        def json(self): return {"results": {"bindings": []}}
+    calls = []
+
+    def flaky(session, url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            raise RuntimeError("cirrus down")
+        return Resp()
+    monkeypatch.setattr(client_mod, "http_get", flaky)
+    kg = KGClient(FakeMC(), api_url="http://api")
+    assert kg._sparql_find_by_value("P21", "2401.00001") is None
+
+
+def test_author_outage_marks_import_incomplete_and_skips_further_lookups():
+    from topic_overviews.http_utils import LookupUnavailableError
+    item = FakeItem()
+    resolver = MagicMock()
+    resolver.resolve.side_effect = LookupUnavailableError("503")
+    kg = KGClient(FakeMC(item=item), author_resolver=resolver)
+    kg.find_existing_paper = lambda record: None
+    record = PaperRecord(
+        arxiv_id="2401.00001", title="T", abstract="", authors=["Jane Doe", "John Smith"],
+        categories=[], published="2024-01-02", doi=None,
+    )
+    qid = kg.import_paper(record)
+    assert qid == "Q500" and item.written
+    assert kg.last_import_incomplete is True
+    assert resolver.resolve.call_count == 1          # no second lookup during the outage
+    assert [v for p, v in item.claims if p == "P43"] == ["Jane Doe", "John Smith"]
+    assert not any(p == "P16" for p, _ in item.claims)
+
+
+def test_import_is_complete_when_all_lookups_work():
+    resolver = MagicMock()
+    resolver.resolve.return_value = None
+    kg = KGClient(FakeMC(item=FakeItem()), author_resolver=resolver)
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(PAPER)
+    assert kg.last_import_incomplete is False
+
+
+# ---------------------------------------------------------------------------
+# P163 holds license items, not URLs
+# ---------------------------------------------------------------------------
+
+def test_license_qid_maps_url_variants():
+    from topic_overviews.kg.model import license_qid
+    assert license_qid("https://creativecommons.org/licenses/by/4.0/") == "Q57056"
+    assert license_qid("http://creativecommons.org/licenses/by/4.0/legalcode") == "Q57056"
+    assert license_qid("https://creativecommons.org/licenses/by-nc-sa/4.0/deed.en") == "Q57078"
+    assert license_qid("https://www.gnu.org/licenses/gpl-3.0.html") == "Q56621"
+    assert license_qid("https://creativecommons.org/publicdomain/zero/1.0/") == "Q56468"
+    assert license_qid("https://example.org/custom-license") == ""
+    assert license_qid("") == ""
+
+
+def _licensed(url):
+    return PaperRecord(
+        arxiv_id="", title="T", abstract="", authors=[], categories=[], published="2025-01-01",
+        doi="10.1000/x", zbmath_id="1.2", zbmath_de_number="9", license_url=url,
+    )
+
+
+def test_import_paper_writes_license_as_item():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(_licensed("https://creativecommons.org/licenses/by/4.0/"))
+    assert ("P163", "Q57056") in item.claims
+    assert not any(v == "https://creativecommons.org/licenses/by/4.0/" for _, v in item.claims)
+
+
+def test_import_paper_skips_unmapped_license_with_warning(caplog):
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    with caplog.at_level(logging.WARNING):
+        kg.import_paper(_licensed("https://example.org/custom-license"))
+    assert not any(p == "P163" for p, _ in item.claims)
+    assert "https://example.org/custom-license" in caplog.text
+
+
+def _crossref_http(monkeypatch, kg, existing, response):
+    import topic_overviews.kg.client as client_mod
+    posts = []
+
+    class Resp:
+        def __init__(self, data): self._d = data
+        def json(self): return self._d
+    monkeypatch.setattr(client_mod, "http_get", lambda *a, **k: Resp({"claims": existing}))
+
+    def post(s, url, data=None, **k):
+        posts.append(data)
+        return Resp(response)
+    monkeypatch.setattr(client_mod, "http_post", post)
+    kg._get_session = lambda: None
+    kg._csrf = lambda: "tok"
+    return posts
+
+
+def test_add_crossref_license_writes_item_value(monkeypatch):
+    kg = KGClient(FakeMC(), api_url="http://api")
+    posts = _crossref_http(monkeypatch, kg, {}, {"success": 1})
+    kg.add_crossref_license("Q7", "https://creativecommons.org/licenses/by/4.0/legalcode")
+    assert len(posts) == 1
+    assert posts[0]["property"] == "P163"
+    assert json.loads(posts[0]["value"]) == {"entity-type": "item", "id": "Q57056"}
+
+
+def test_add_crossref_license_unmapped_url_writes_nothing(monkeypatch, caplog):
+    kg = KGClient(FakeMC(), api_url="http://api")
+    posts = _crossref_http(monkeypatch, kg, {}, {"success": 1})
+    with caplog.at_level(logging.WARNING):
+        kg.add_crossref_license("Q7", "https://example.org/custom")
+    assert posts == []
+    assert "https://example.org/custom" in caplog.text
+
+
+def test_add_crossref_license_does_not_claim_success_when_api_rejects(monkeypatch, caplog):
+    kg = KGClient(FakeMC(), api_url="http://api")
+    _crossref_http(monkeypatch, kg, {}, {"error": {"info": "bad value"}})
+    with caplog.at_level(logging.INFO):
+        kg.add_crossref_license("Q7", "https://creativecommons.org/licenses/by/4.0/")
+    assert "rejected: bad value" in caplog.text
+    assert "Added P163" not in caplog.text
+
+
+def test_add_crossref_license_keeps_existing_license(monkeypatch):
+    kg = KGClient(FakeMC(), api_url="http://api")
+    posts = _crossref_http(monkeypatch, kg, {"P163": [{}]}, {"success": 1})
+    kg.add_crossref_license("Q7", "https://creativecommons.org/licenses/by/4.0/")
+    assert posts == []
+
+
+def test_zbmath_enrichment_writes_license_item(monkeypatch):
+    kg = KGClient(FakeMC(), api_url="http://api")
+    posts = _crossref_http(monkeypatch, kg, {}, {"success": 1})
+    kg.add_zbmath_enrichment("Q7", "", [], license_url="https://creativecommons.org/licenses/by/4.0/")
+    lic = [p for p in posts if p["property"] == "P163"]
+    assert len(lic) == 1
+    assert json.loads(lic[0]["value"]) == {"entity-type": "item", "id": "Q57056"}
+
+
+# ---------------------------------------------------------------------------
+# Descriptions of new items; year-only dates
+# ---------------------------------------------------------------------------
+
+def test_new_arxiv_item_gets_arxiv_description():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(PAPER)
+    assert item.description == ("en", "scientific article from arXiv")
+
+
+def test_new_zbmath_item_gets_de_number_description():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(ZB_PAPER)
+    assert item.description == ("en", "scientific article; zbMATH DE number 7860651")
+
+
+def test_new_openalex_only_item_gets_no_description():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    record = PaperRecord(
+        arxiv_id="", title="T", abstract="", authors=[], categories=[],
+        published="2025-01-01", doi="10.1000/oa", openalex_id="W1",
+    )
+    kg.import_paper(record)
+    assert item.description is None
+
+
+def test_existing_item_keeps_its_description():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: "Q500"
+    kg.import_paper(PAPER)
+    assert item.description is None
+
+
+def test_description_clash_is_retried_with_a_distinct_description():
+    class ClashingItem(FakeItem):
+        def __init__(self):
+            super().__init__()
+            self.writes = []
+
+        def write(self):
+            self.writes.append(self.description)
+            if len(self.writes) == 1:
+                raise RuntimeError(
+                    'Item [[Item:Q9|Q9]] already has label "T" associated with language '
+                    "code en, using the same description text."
+                )
+            return self
+
+    item = ClashingItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    assert kg.import_paper(PAPER) == "Q500"
+    assert item.writes == [
+        ("en", "scientific article from arXiv"),
+        ("en", "scientific article from arXiv (2401.00001)"),
+    ]
+
+
+def test_other_write_errors_are_not_swallowed():
+    import pytest
+
+    class FailingItem(FakeItem):
+        def write(self):
+            raise RuntimeError("edit conflict")
+
+    kg = KGClient(FakeMC(item=FailingItem()))
+    kg.find_existing_paper = lambda record: None
+    with pytest.raises(RuntimeError, match="edit conflict"):
+        kg.import_paper(PAPER)
+
+
+def test_to_wbi_time_keeps_missing_month_and_day_as_zero():
+    assert to_wbi_time("2025") == "+2025-00-00T00:00:00Z"
+    assert to_wbi_time("2025-05") == "+2025-05-00T00:00:00Z"
+    assert to_wbi_time("2025-05-17") == "+2025-05-17T00:00:00Z"
+
+
+def test_zbmath_year_only_date_is_written_with_year_precision():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    record = PaperRecord(
+        arxiv_id="", title="T", abstract="", authors=[], categories=[], published="2025",
+        doi="10.1000/p", zbmath_id="1.2", zbmath_de_number="9",
+    )
+    kg.import_paper(record)
+    assert ("P28", "+2025-00-00T00:00:00Z") in item.claims

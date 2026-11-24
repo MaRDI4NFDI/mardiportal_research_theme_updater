@@ -19,6 +19,14 @@ import requests
 
 log = logging.getLogger(__name__)
 
+class LookupUnavailableError(Exception):
+    """A lookup in the portal failed (outage), as opposed to finding nothing.
+
+    "Not found" and "could not ask" must stay apart: treating an outage as
+    "not found" creates duplicate items and leaves links missing for good.
+    """
+
+
 _RETRIES = 5            # attempts in total
 _DELAY = 5.0            # pause after the first failed attempt; doubles each time
 _MAX_DELAY = 60.0       # cap on one pause

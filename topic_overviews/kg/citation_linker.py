@@ -281,9 +281,28 @@ def fetch_s2_references(
         return []
 
 
+_MIN_TITLE_WORDS = 4  # shorter titles ("Introduction", "Erratum") match unrelated items
+
+
+def _is_publication(entity: dict) -> bool:
+    """True if the item carries the MaRDI publication profile (P1460)."""
+    for claim in (entity.get("claims") or {}).get(M.P_PROFILE_TYPE, []):
+        value = claim.get("mainsnak", {}).get("datavalue", {}).get("value") or {}
+        if value.get("id") == M.Q_PUBLICATION_PROFILE:
+            return True
+    return False
+
+
 def _search_kg_by_title(title: str, mediawiki_api_url: str, session=None) -> str:
-    """Return a KG QID for a scholarly article whose label exactly matches title, or ''."""
-    if not title or not mediawiki_api_url:
+    """Return the QID of the one publication whose label exactly matches *title*, or ''.
+
+    A title is weak evidence, so the match must be unambiguous: the item has to
+    be a publication (MaRDI publication profile), and if several publications
+    share the title (an arXiv preprint and its published version, say) the
+    reference is left unresolved rather than guessed. Short, generic titles are
+    not searched at all.
+    """
+    if not title or not mediawiki_api_url or len(title.split()) < _MIN_TITLE_WORDS:
         return ""
     sess = session or requests.Session()
     try:
@@ -294,9 +313,26 @@ def _search_kg_by_title(title: str, mediawiki_api_url: str, session=None) -> str
             timeout=15,
         )
         resp.raise_for_status()
-        for hit in resp.json().get("search", []):
-            if hit.get("label", "").lower() == title.lower():
-                return hit["id"]
+        ids = list(dict.fromkeys(
+            hit["id"] for hit in resp.json().get("search", [])
+            if hit.get("label", "").lower() == title.lower()
+        ))
+        if not ids:
+            return ""
+        resp = sess.get(
+            mediawiki_api_url,
+            params={"action": "wbgetentities", "ids": "|".join(ids),
+                    "props": "claims", "format": "json"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        entities = resp.json().get("entities", {})
+        publications = [q for q in ids if _is_publication(entities.get(q, {}))]
+        if len(publications) == 1:
+            return publications[0]
+        if len(publications) > 1:
+            log.debug("KG title search for %r is ambiguous (%s) — skipped",
+                      title[:60], ", ".join(publications))
     except Exception as exc:
         log.warning("KG title search for %r failed: %s", title[:60], exc)
     return ""

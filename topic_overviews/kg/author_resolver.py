@@ -19,7 +19,7 @@ import logging
 
 import requests
 
-from ..http_utils import http_get
+from ..http_utils import LookupUnavailableError, http_get
 from . import model as M
 
 log = logging.getLogger(__name__)
@@ -52,7 +52,11 @@ class AuthorResolver:
         self._claims_cache: dict[str, dict] = {}
 
     def resolve(self, name: str) -> str | None:
-        """Return a MaRDI KG QID for *name*, or None if unresolvable."""
+        """Return a MaRDI KG QID for *name*, or None if unresolvable.
+
+        Raises LookupUnavailableError when the portal could not be asked; that
+        outcome is not cached, so a later call asks again.
+        """
         if name not in self._cache:
             self._cache[name] = self._resolve(name)
         return self._cache[name]
@@ -85,7 +89,7 @@ class AuthorResolver:
         return None
 
     def _kg_claims(self, qid: str) -> dict:
-        """Claims of a KG item (cached); {} if they cannot be read."""
+        """Claims of a KG item (cached). Raises LookupUnavailableError if the portal fails."""
         if qid not in self._claims_cache:
             claims: dict = {}
             try:
@@ -102,7 +106,7 @@ class AuthorResolver:
                 )
                 claims = r.json()["entities"][qid].get("claims", {})
             except Exception as exc:
-                log.warning("Claims lookup failed for %s: %s", qid, exc)
+                raise LookupUnavailableError(f"claims lookup for {qid} failed: {exc}") from exc
             self._claims_cache[qid] = claims
         return self._claims_cache[qid]
 
@@ -133,8 +137,8 @@ class AuthorResolver:
                 for h in r.json().get("search", [])
             ]
         except Exception as exc:
-            log.warning("KG search failed for %r: %s", name, exc)
-            return []
+            # Not "no match": the caller must not treat an outage as an unknown person.
+            raise LookupUnavailableError(f"KG search for {name!r} failed: {exc}") from exc
 
     def _openalex_orcid(self, name: str) -> str | None:
         try:

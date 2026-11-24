@@ -170,7 +170,7 @@ def test_parse_with_arxiv():
     assert r.categories == []                 # zbMATH records carry no arXiv categories
     assert r.msc_codes == ["68W25", "81P68"]  # MSC codes → P226
     assert r.doi == "10.1234/example"
-    assert r.published == "2026-01-01"
+    assert r.published == "2026"          # year only, no made-up day
     assert r.record_id == "zbmath:2606.12345"
 
 

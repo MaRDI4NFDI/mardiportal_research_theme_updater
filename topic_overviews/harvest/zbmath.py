@@ -74,8 +74,10 @@ def parse_documents_page(docs: list[dict]) -> list[PaperRecord]:
             elif ltype == "arxiv" and not arxiv_id:
                 arxiv_id = lid
 
-        year = str(d.get("year") or "").strip()
-        published = f"{year}-01-01" if year else ""
+        # zbMATH only knows the year. It stays a year (written with year precision);
+        # inventing "<year>-01-01" would claim a day nobody published on. A real
+        # date from the OpenAlex enrichment replaces it in the pipeline.
+        published = str(d.get("year") or "").strip()
 
         zbmath_keywords = [kw for kw in (d.get("keywords") or []) if kw]
         source = d.get("source") or {}

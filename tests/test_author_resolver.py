@@ -116,11 +116,32 @@ class TestAuthorResolver:
         resolver = AuthorResolver("https://example.org/api", session=session)
         assert resolver.resolve("Alice Smith") == "Q2"
 
-    def test_kg_search_exception_returns_none(self):
+    def test_kg_search_outage_raises_and_is_not_cached(self):
+        from topic_overviews.http_utils import LookupUnavailableError
         session = MagicMock()
         session.get.side_effect = Exception("network error")
         resolver = AuthorResolver("https://example.org/api", session=session)
-        assert resolver.resolve("Someone") is None
+        with pytest.raises(LookupUnavailableError):
+            resolver.resolve("Someone")
+        # Not remembered as "unknown": once the portal is back, the name resolves.
+        session.get.side_effect = _mock_session([[_hit("Q5", "Someone")]]).get.side_effect
+        assert resolver.resolve("Someone") == "Q5"
+
+    def test_claims_outage_raises(self):
+        from topic_overviews.http_utils import LookupUnavailableError
+        good = _mock_session([[_hit("Q5", "Someone")]])
+        calls = []
+
+        def get(url, params=None, **kwargs):
+            calls.append(params["action"])
+            if params["action"] == "wbgetentities":
+                raise Exception("503")
+            return good.get(url, params=params)
+        session = MagicMock()
+        session.get.side_effect = get
+        resolver = AuthorResolver("https://example.org/api", session=session)
+        with pytest.raises(LookupUnavailableError):
+            resolver.resolve("Someone")
 
     def test_openalex_orcid_strips_url_prefix(self):
         resolver = AuthorResolver("https://example.org/api")

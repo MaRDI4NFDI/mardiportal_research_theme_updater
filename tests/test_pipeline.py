@@ -582,7 +582,7 @@ def test_harvest_step_keeps_year_approximation_when_oa_date_not_found():
     zb_topic = Topic(qid="Q30", label="Numerics", description="", zbmath_query="cc:65-XX")
     zb_paper = PaperRecord(
         arxiv_id="", title="Unknown Date", abstract="", authors=[], categories=[],
-        published="2026-01-01", doi="10.bad/doi", zbmath_id="ZB888",
+        published="2026", doi="10.bad/doi", zbmath_id="ZB888",
     )
     imported_published = []
     original_import = kg.import_paper
@@ -601,7 +601,7 @@ def test_harvest_step_keeps_year_approximation_when_oa_date_not_found():
         keyworder=_kw(["kw"]),
     )
 
-    assert imported_published == ["2026-01-01"]   # unchanged year approximation
+    assert imported_published == ["2026"]   # no OpenAlex date: stays the bare year
 
 
 def test_ensure_theme_pages_dry_run_writes_nothing():
@@ -772,3 +772,31 @@ def test_harvest_stops_when_tldr_generation_hits_outage():
             summarize=summarize_paper, keyworder=_kw(), llm=DownLLM(),
         )
     assert kg.imported == []
+
+
+def test_incomplete_import_withholds_tldr_so_next_run_completes_it(caplog):
+    """A lookup failed during import (portal outage): the paper is imported and linked
+    to its theme, but gets no TL;DR, so the next run picks it up again."""
+    cfg = _cfg({"TOPIC_OVERVIEWS_DRY_RUN": "false"})
+    kg = FakeKG()
+    kg.last_import_incomplete = True
+
+    run = lambda: pipeline.harvest_step(
+        cfg, State(), topics=TOPICS, kg=kg, model="test-model",
+        fetch=lambda config: iter([P1]),
+        classify=lambda *a, **k: ["Q11"],
+        summarize=_summ("a short summary"),
+        keyworder=_kw(["A"]),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert run() == 1
+    assert kg.links == [("Q11", "Q999")]     # imported and linked ...
+    assert kg.tldrs == []                    # ... but not marked complete
+    assert "TL;DR withheld" in caplog.text
+
+    # Next run: the lookups work again, the item is completed.
+    kg.paper_qids["2401.00001"] = "Q999"
+    kg.last_import_incomplete = False
+    assert run() == 1
+    assert kg.tldrs == [("Q999", "a short summary", None)]
