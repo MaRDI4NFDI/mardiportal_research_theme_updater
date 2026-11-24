@@ -664,7 +664,7 @@ def test_paper_doi():
 
 
 # ---------------------------------------------------------------------------
-# Authors: name strings are "First Last"; zbMATH author IDs are matched first
+# Authors: name strings are "First Last"; person items are linked by identifier only
 # ---------------------------------------------------------------------------
 
 def _zb_record(authors, codes):
@@ -684,31 +684,78 @@ def test_name_strings_are_written_first_last():
     assert names == ["Jane Doe", "John Smith"]
 
 
-def test_author_matched_by_zbmath_author_id_before_name():
-    item = FakeItem()
-    resolver = MagicMock()
-    kg = KGClient(FakeMC(item=item), author_resolver=resolver)
-    kg.find_existing_paper = lambda record: None
+def _author_lookups(kg, hits):
+    """Stub the identifier lookup: *hits* maps an identifier value to a QID."""
     lookups = []
-    kg._sparql_find_by_value = lambda prop, value, exclude_props=(): (
-        lookups.append((prop, value)) or ("Q777" if value == "doe.jane.1" else None)
+
+    def find(prop, value, exclude_props=()):
+        lookups.append((prop, value))
+        return hits.get(value)
+    kg._sparql_find_by_value = find
+    return lookups
+
+
+def _record_with_ids(authors, zbmath_ids=(), orcids=()):
+    return PaperRecord(
+        arxiv_id="", title="A Paper", abstract="", authors=authors, categories=[],
+        published="2025", doi="10.1000/p", zbmath_id="1.2", zbmath_de_number="9",
+        zbmath_author_ids=list(zbmath_ids), author_orcids=list(orcids),
     )
-    kg.import_paper(_zb_record(["Doe, Jane"], [("Doe, Jane", "doe.jane.1")]))
-    assert ("P16", "Q777") in item.claims
-    assert ("P676", "doe.jane.1") in lookups
-    resolver.resolve.assert_not_called()
 
 
-def test_author_without_zbmath_match_falls_back_to_name_resolver():
+def test_author_matched_by_zbmath_author_id():
     item = FakeItem()
-    resolver = MagicMock()
-    resolver.resolve.return_value = "Q888"
-    kg = KGClient(FakeMC(item=item), author_resolver=resolver)
+    kg = KGClient(FakeMC(item=item))
     kg.find_existing_paper = lambda record: None
-    kg._sparql_find_by_value = lambda prop, value, exclude_props=(): None
-    kg.import_paper(_zb_record(["Doe, Jane"], [("Doe, Jane", "doe.jane.1")]))
-    resolver.resolve.assert_called_once_with("Doe, Jane")
+    lookups = _author_lookups(kg, {"doe.jane.1": "Q777"})
+    kg.import_paper(_record_with_ids(["Doe, Jane"], zbmath_ids=[("Doe, Jane", "doe.jane.1")]))
+    assert ("P16", "Q777") in item.claims
+    assert lookups == [("P676", "doe.jane.1")]
+
+
+def test_author_matched_by_orcid_from_openalex():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    lookups = _author_lookups(kg, {"0000-0002-1825-0097": "Q888"})
+    kg.import_paper(_record_with_ids(["Jane Doe"], orcids=[("Jane Doe", "0000-0002-1825-0097")]))
     assert ("P16", "Q888") in item.claims
+    assert lookups == [("P20", "0000-0002-1825-0097")]
+
+
+def test_zbmath_id_is_tried_before_orcid_and_orcid_is_the_fallback():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    lookups = _author_lookups(kg, {"0000-0002-1825-0097": "Q888"})
+    kg.import_paper(_record_with_ids(
+        ["Jane Doe"], zbmath_ids=[("Jane Doe", "doe.jane.1")],
+        orcids=[("Jane Doe", "0000-0002-1825-0097")],
+    ))
+    assert lookups == [("P676", "doe.jane.1"), ("P20", "0000-0002-1825-0097")]
+    assert ("P16", "Q888") in item.claims
+
+
+def test_author_without_identifier_gets_only_a_name_string():
+    """A name proves nothing about identity: no lookup by name, no link to a person item."""
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    lookups = _author_lookups(kg, {"Jane Doe": "Q_SOMEONE_WITH_THE_SAME_NAME"})
+    kg.import_paper(_record_with_ids(["Jane Doe", "John Smith"]))
+    assert lookups == []
+    assert [v for p, v in item.claims if p == "P43"] == ["Jane Doe", "John Smith"]
+    assert not any(p == "P16" for p, _ in item.claims)
+
+
+def test_author_with_unknown_identifier_gets_only_a_name_string():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    _author_lookups(kg, {})
+    kg.import_paper(_record_with_ids(["Jane Doe"], orcids=[("Jane Doe", "0000-0002-1825-0097")]))
+    assert [v for p, v in item.claims if p == "P43"] == ["Jane Doe"]
+    assert not any(p == "P16" for p, _ in item.claims)
 
 
 # ---------------------------------------------------------------------------
@@ -752,28 +799,31 @@ def test_lookup_returns_none_when_only_one_source_fails(monkeypatch):
 def test_author_outage_marks_import_incomplete_and_skips_further_lookups():
     from topic_overviews.http_utils import LookupUnavailableError
     item = FakeItem()
-    resolver = MagicMock()
-    resolver.resolve.side_effect = LookupUnavailableError("503")
-    kg = KGClient(FakeMC(item=item), author_resolver=resolver)
+    kg = KGClient(FakeMC(item=item))
     kg.find_existing_paper = lambda record: None
-    record = PaperRecord(
-        arxiv_id="2401.00001", title="T", abstract="", authors=["Jane Doe", "John Smith"],
-        categories=[], published="2024-01-02", doi=None,
+    calls = []
+
+    def down(prop, value, exclude_props=()):
+        calls.append((prop, value))
+        raise LookupUnavailableError("503")
+    kg._sparql_find_by_value = down
+    record = _record_with_ids(
+        ["Jane Doe", "John Smith"],
+        orcids=[("Jane Doe", "0000-0002-1825-0097"), ("John Smith", "0000-0003-0439-7212")],
     )
     qid = kg.import_paper(record)
     assert qid == "Q500" and item.written
     assert kg.last_import_incomplete is True
-    assert resolver.resolve.call_count == 1          # no second lookup during the outage
+    assert calls == [("P20", "0000-0002-1825-0097")]  # no second lookup during the outage
     assert [v for p, v in item.claims if p == "P43"] == ["Jane Doe", "John Smith"]
     assert not any(p == "P16" for p, _ in item.claims)
 
 
 def test_import_is_complete_when_all_lookups_work():
-    resolver = MagicMock()
-    resolver.resolve.return_value = None
-    kg = KGClient(FakeMC(item=FakeItem()), author_resolver=resolver)
+    kg = KGClient(FakeMC(item=FakeItem()))
     kg.find_existing_paper = lambda record: None
-    kg.import_paper(PAPER)
+    _author_lookups(kg, {})
+    kg.import_paper(_record_with_ids(["Jane Doe"], orcids=[("Jane Doe", "0000-0002-1825-0097")]))
     assert kg.last_import_incomplete is False
 
 

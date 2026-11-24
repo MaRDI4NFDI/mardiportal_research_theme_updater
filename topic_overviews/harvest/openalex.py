@@ -16,6 +16,7 @@ from urllib.parse import parse_qs
 
 import requests
 
+from ..kg.names import normalize_orcid
 from .arxiv_oai import PaperRecord
 
 OPENALEX_API_URL = "https://api.openalex.org/works"
@@ -71,6 +72,15 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
             (a.get("author") or {}).get("display_name") or a.get("raw_author_name", "")
             for a in (w.get("authorships") or [])
         ]
+        # OpenAlex delivers the author's ORCID with each authorship; that is an
+        # identifier, so no name search is needed (or wanted) to find it.
+        author_orcids = []
+        for a in (w.get("authorships") or []):
+            author = a.get("author") or {}
+            name = author.get("display_name") or a.get("raw_author_name", "")
+            orcid = normalize_orcid(author.get("orcid"))
+            if name and orcid:
+                author_orcids.append((name, orcid))
         categories: list[str] = []  # OpenAlex topics are not arXiv category codes
         primary = w.get("primary_location") or {}
         source = primary.get("source") or {}
@@ -95,6 +105,7 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
             title=(w.get("title") or "").strip(),
             abstract=_reconstruct_abstract(w.get("abstract_inverted_index")),
             authors=[a for a in authors if a],
+            author_orcids=author_orcids,
             categories=categories,
             published=(w.get("publication_date") or "")[:10],
             doi=doi,

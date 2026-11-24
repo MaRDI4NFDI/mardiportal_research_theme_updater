@@ -249,3 +249,22 @@ def test_lookup_date_sends_mailto():
     lookup_publication_date(doi="10.1234/xyz", session=sess, email="bot@example.com")
     _, params = sess.calls[0]
     assert params.get("mailto") == "bot@example.com"
+
+
+def test_authorship_orcids_are_taken_from_openalex_not_searched_by_name():
+    work = dict(WORK_WITH_ARXIV, authorships=[
+        {"author": {"display_name": "Jane Doe", "orcid": "https://orcid.org/0000-0002-1825-0097"}},
+        {"author": {"display_name": "John Smith", "orcid": None}},
+        {"author": {"display_name": "Eve Adams", "orcid": "garbage"}},
+        {"author": {"display_name": "Max Roe", "orcid": "https://orcid.org/0000-0003-0439-7212"}},
+    ])
+    record = parse_works_page([work])[0]
+    assert record.authors == ["Jane Doe", "John Smith", "Eve Adams", "Max Roe"]
+    assert record.author_orcids == [
+        ("Jane Doe", "0000-0002-1825-0097"),
+        ("Max Roe", "0000-0003-0439-7212"),
+    ]
+
+
+def test_work_without_orcids_has_no_author_orcids():
+    assert parse_works_page([WORK_WITH_ARXIV])[0].author_orcids == []

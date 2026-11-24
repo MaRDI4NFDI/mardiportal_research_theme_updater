@@ -18,7 +18,7 @@ from wikibaseintegrator.models import Qualifiers
 
 from ..harvest.arxiv_oai import PaperRecord
 from . import model as M
-from .author_resolver import AuthorResolver, normalize_author_name
+from .names import normalize_author_name
 
 log = logging.getLogger(__name__)
 
@@ -97,14 +97,12 @@ class KGClient:
     def __init__(
         self,
         mc,
-        author_resolver: AuthorResolver | None = None,
         api_url: str = "",
         bot_user: str = "",
         bot_password: str = "",
         sparql_endpoint: str = "",
     ):
         self.mc = mc
-        self.author_resolver = author_resolver
         self._api_url = api_url
         self._bot_user = bot_user
         self._bot_password = bot_password
@@ -436,13 +434,14 @@ LIMIT 1
         for code in getattr(record, "msc_codes", None) or []:
             item.add_claim(M.P_MSC_ID, value=code)
         zbmath_codes = dict(getattr(record, "zbmath_author_ids", None) or [])
+        orcids = dict(getattr(record, "author_orcids", None) or [])
         for name in record.authors:
             # Name strings are stored as "First Last" (zbMATH gives "Last, First").
             item.add_claim(M.P_AUTHOR_NAME_STRING, value=normalize_author_name(name))
             author_qid = None
             if not self.last_import_incomplete:  # after one outage, stop asking for this paper
                 try:
-                    author_qid = self._resolve_author(name, zbmath_codes.get(name))
+                    author_qid = self._find_author(zbmath_codes.get(name), orcids.get(name))
                 except LookupUnavailableError as exc:
                     # An outage is not "unknown person": keep the item incomplete so the
                     # next run asks again instead of leaving the author link missing.
@@ -496,18 +495,19 @@ LIMIT 1
                 return item.write().id
             raise
 
-    def _resolve_author(self, name: str, zbmath_author_id: str | None = None) -> str | None:
-        """QID of the person item for an author, or None.
+    def _find_author(self, zbmath_author_id: str | None, orcid: str | None) -> str | None:
+        """QID of the person item with this zbMATH author ID (P676) or ORCID (P20), or None.
 
-        A zbMATH author ID (P676) is an identifier, so a match on it is used
-        first. Otherwise the resolver matches by name, and accepts only an
-        item that is a human whose label equals the name.
+        Only identifiers count. A name says nothing about whether two people are
+        the same, so an author without an ID match gets just the author name
+        string and no link to a person item.
         """
-        if zbmath_author_id:
-            qid = self._sparql_find_by_value(M.P_ZBMATH_AUTHOR_ID, zbmath_author_id)
-            if qid:
-                return qid
-        return self.author_resolver.resolve(name) if self.author_resolver else None
+        for prop, value in ((M.P_ZBMATH_AUTHOR_ID, zbmath_author_id), (M.P_ORCID, orcid)):
+            if value:
+                qid = self._sparql_find_by_value(prop, value)
+                if qid:
+                    return qid
+        return None
 
     @staticmethod
     def _add_tldr_claim(item, tldr: str, tldr_model_qid: str | None) -> None:
@@ -1057,10 +1057,8 @@ def make_kg_client(config) -> KGClient:
         sparql_endpoint_url=config.sparql_endpoint_url,
         wikibase_url=config.wikibase_url,
     )
-    resolver = AuthorResolver(config.mediawiki_api_url)
     return KGClient(
         mc,
-        author_resolver=resolver,
         api_url=config.mediawiki_api_url,
         bot_user=config.mediawiki_bot_user,
         bot_password=config.mediawiki_bot_password,

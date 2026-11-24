@@ -29,6 +29,7 @@ class PaperRecord:
     zbmath_de_number: str = ""   # zbMATH DE Number (numeric), e.g. "7860651" → P1451
     preprint_arxiv_id: str = ""  # arXiv ID of the preprint of a published zbMATH record (never written as P21)
     zbmath_author_ids: list[tuple[str, str]] = field(default_factory=list)
+    author_orcids: list[tuple[str, str]] = field(default_factory=list)  # (name, bare ORCID iD) as delivered by OpenAlex
     zbmath_keywords: list[str] = field(default_factory=list)
     journal_title: str = ""
     msc_codes: list[str] = field(default_factory=list)
