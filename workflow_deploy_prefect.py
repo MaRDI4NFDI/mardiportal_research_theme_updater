@@ -9,6 +9,8 @@ Run once (or after changes to parameters/schedule) with:
 Schedules can also be set or changed via the Prefect UI after deployment
 (Deployments → <name> → + Schedule).
 """
+import os
+
 from prefect import flow
 
 _SOURCE = "https://github.com/MaRDI4NFDI/mardiportal_research_theme_updater.git"
@@ -20,6 +22,9 @@ _JOB_VARIABLES = {
     "env": {
         "PREFECT_LOGGING_EXTRA_LOGGERS": "topic_overviews",
         "LAKEFS_URL": "https://lake-bioinfmed.zib.de",
+        # Contact for the OpenAlex/Crossref polite pools. Taken from the deploying
+        # shell so no address is stored in the repo; empty = no contact sent.
+        "TOPIC_OVERVIEWS_OPENALEX_EMAIL": os.environ.get("TOPIC_OVERVIEWS_OPENALEX_EMAIL", ""),
     },
 }
 

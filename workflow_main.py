@@ -83,7 +83,8 @@ def topic_overviews(
         arxiv_query="",
         arxiv_query_property="P1965",
         openalex_query_property="P1967",
-        openalex_email="",
+        # Contact address for the OpenAlex/Crossref polite pools; set in the deployment env.
+        openalex_email=os.environ.get("TOPIC_OVERVIEWS_OPENALEX_EMAIL", "").strip(),
         zbmath_query="",
         zbmath_query_property="P1979",
         since_days_property="P1968",
