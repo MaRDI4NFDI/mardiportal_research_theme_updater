@@ -50,3 +50,59 @@ def test_upload_markdown_calls_lakefs():
     content = call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get("data", b"")
     assert b"# Hello" in content
     assert result == "main/61/90/92/Q6190920/fulltext/Q6190920.md.txt"
+
+
+# --- "commit: no changes" is not a failure -----------------------------------
+
+import json
+import logging
+
+import pytest
+from lakefs.exceptions import ServerException
+
+from topic_overviews.lakefs_upload import commit_upload, is_no_changes
+
+COMMIT_ARGS = dict(url="https://lakefs.example.org", user="u", password="p", repo="r", branch="main")
+
+
+def _no_changes():
+    return ServerException(400, "Bad Request", json.dumps({"message": "commit: no changes"}))
+
+
+def _commit_raising(exc):
+    branch = MagicMock()
+    branch.commit.side_effect = exc
+    return branch
+
+
+def _run_commit(branch):
+    with patch("topic_overviews.lakefs_upload.lakefs.Client"), \
+         patch("topic_overviews.lakefs_upload.lakefs.repository") as repo:
+        repo.return_value.branch.return_value = branch
+        return commit_upload("msg", **COMMIT_ARGS)
+
+
+def test_is_no_changes_recognises_the_lakefs_response():
+    assert is_no_changes(_no_changes())
+    assert not is_no_changes(ServerException(400, "Bad Request", json.dumps({"message": "other"})))
+    assert not is_no_changes(ServerException(500, "Err", json.dumps({"message": "commit: no changes"})))
+    assert not is_no_changes(RuntimeError("commit: no changes"))
+
+
+def test_commit_upload_returns_commit_id():
+    branch = MagicMock()
+    branch.commit.return_value.id = "abc123"
+    assert _run_commit(branch) == "abc123"
+
+
+def test_commit_upload_with_no_changes_is_not_an_error(caplog):
+    with caplog.at_level(logging.INFO):
+        assert _run_commit(_commit_raising(_no_changes())) == ""
+    assert "nothing to commit" in caplog.text
+
+
+def test_commit_upload_still_raises_other_errors():
+    with pytest.raises(ServerException):
+        _run_commit(_commit_raising(ServerException(500, "Server Error", json.dumps({"message": "boom"}))))
+    with pytest.raises(RuntimeError):
+        _run_commit(_commit_raising(RuntimeError("network")))

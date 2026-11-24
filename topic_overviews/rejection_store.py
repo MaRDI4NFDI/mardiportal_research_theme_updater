@@ -178,10 +178,20 @@ def save_store(
             content_type="application/json; charset=utf-8",
             pre_sign=False,  # see lakefs_upload.upload_markdown
         )
-        br.commit(
-            message=f"topic-overviews: update rejected papers ({len(store)} entries)",
-            metadata={k: str(v) for k, v in (metadata or {}).items()},
-        )
+        try:
+            br.commit(
+                message=f"topic-overviews: update rejected papers ({len(store)} entries)",
+                metadata={k: str(v) for k, v in (metadata or {}).items()},
+            )
+        except Exception as exc:
+            from .lakefs_upload import is_no_changes
+
+            if not is_no_changes(exc):
+                raise
+            # The stored file already equals ours (e.g. entries added and dropped again).
+            log.info("Rejection store: stored file already up to date — nothing to commit")
+            store.dirty = False
+            return False
         log.info(
             "Rejection store: saved %d entries (%d new) to %s/%s/%s",
             len(store), store.added, repo, branch, path,

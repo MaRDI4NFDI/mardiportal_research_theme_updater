@@ -1,7 +1,26 @@
 """Upload paper Markdown to lakeFS using 2-2-2 QID sharding."""
 from __future__ import annotations
 
+import logging
+
 import lakefs
+from lakefs.exceptions import ServerException
+
+log = logging.getLogger(__name__)
+
+
+def is_no_changes(exc: Exception) -> bool:
+    """True if *exc* is lakeFS refusing an empty commit (``commit: no changes``).
+
+    That happens when the uploaded object is byte-identical to what the branch
+    already holds, e.g. when a paper is processed again. Nothing is wrong then:
+    the content is in lakeFS.
+    """
+    return (
+        isinstance(exc, ServerException)
+        and exc.status_code == 400
+        and "no changes" in str(exc.body.get("message", "")).lower()
+    )
 
 
 def shard_qid(qid: str) -> str:
@@ -64,10 +83,20 @@ def commit_upload(
     branch: str = "main",
     metadata: dict | None = None,
 ) -> str:
-    """Commit all staged changes on *branch* and return the commit ID."""
+    """Commit all staged changes on *branch* and return the commit ID.
+
+    Returns "" when there was nothing to commit (the upload was identical to the
+    stored object), which is not an error.
+    """
     client = lakefs.Client(host=url, username=user, password=password)
-    ref = lakefs.repository(repo, client=client).branch(branch).commit(
-        message=message,
-        metadata=metadata or {},
-    )
+    try:
+        ref = lakefs.repository(repo, client=client).branch(branch).commit(
+            message=message,
+            metadata=metadata or {},
+        )
+    except ServerException as exc:
+        if is_no_changes(exc):
+            log.info("lakeFS: nothing to commit on %s/%s (content unchanged)", repo, branch)
+            return ""
+        raise
     return ref.id

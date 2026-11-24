@@ -249,3 +249,21 @@ def test_unconfigured_lakefs_warns_on_load_and_save(caplog):
     messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any("DISABLED" in m and "url, user" in m for m in messages)
     assert any("NOT saved" in m and "1 new" in m for m in messages)
+
+
+def test_save_with_nothing_to_commit_is_not_a_failure(caplog):
+    import logging
+    from lakefs.exceptions import ServerException
+
+    obj = MagicMock()
+    c, r, repo = _patch_lakefs(obj)
+    repo.branch.return_value.commit.side_effect = ServerException(
+        400, "Bad Request", json.dumps({"message": "commit: no changes"})
+    )
+    store = RejectionStore()
+    store.add("fp", "r1")
+    with c, r, caplog.at_level(logging.INFO):
+        assert save_store(store, **LAKEFS) is False
+    assert not store.dirty
+    assert "already up to date" in caplog.text
+    assert "could not save" not in caplog.text
