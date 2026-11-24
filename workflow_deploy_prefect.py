@@ -53,6 +53,7 @@ if __name__ == "__main__":
         name="topic-overviews-arxiv-update",
         work_pool_name=_WORK_POOL,
         job_variables=_JOB_VARIABLES,
+        cron="0 2 * * *",  # daily 02:00 UTC, one hour after topic-overviews; re-deploying without it clears the schedule
         parameters={
             "limit": 1000,
             "dry_run": False,
