@@ -65,12 +65,17 @@ def topic_overviews(
     openai_api_key = Secret.load("topic-overviews-openai-api-key").get()
     try:
         s2_api_key = Secret.load("topic-overviews-s2-api-key").get()
-    except Exception:
+    except Exception as exc:
+        logger.warning("Semantic Scholar key unavailable (%s) — continuing without it", exc)
         s2_api_key = ""
     try:
         lakefs_user = Secret.load("lakefs-user").get()
         lakefs_password = Secret.load("lakefs-password").get()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "lakeFS credentials unavailable (%s) — fulltext uploads and the "
+            "rejection store are disabled for this run", exc,
+        )
         lakefs_user = ""
         lakefs_password = ""
 

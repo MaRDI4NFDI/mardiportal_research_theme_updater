@@ -566,7 +566,7 @@ LIMIT 1
             _write_if_missing(M.P_ZBMATH_DE_NUMBER, zbmath_de_number, "P1451")
         if license_url:
             _write_if_missing(M.P_LICENSE, license_url, "P163")
-        for code in msc_codes or []:
+        if msc_codes:
             r = http_get(
                 s,
                 self._api_url,
@@ -579,7 +579,7 @@ LIMIT 1
                 for c in r.json().get("claims", {}).get(M.P_MSC_ID, [])
                 if c.get("mainsnak", {}).get("datavalue")
             }
-            for code in msc_codes or []:
+            for code in msc_codes:
                 if code not in existing_msc:
                     http_post(
                         s,
@@ -593,7 +593,6 @@ LIMIT 1
                         timeout=30,
                     )
                     log.info("Enriched %s: added P226=%s", paper_qid, code)
-            break  # only one GET needed for existing MSC check
 
         # P1450 zbMATH keywords
         if zbmath_keywords:
