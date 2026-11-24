@@ -29,9 +29,29 @@ class FakeSitelinks:
         self._d[site] = title
 
 
+class FakeClaim:
+    """Existing statement on an item: string value, remembers if it was removed."""
+    def __init__(self, value):
+        self.mainsnak = type("Snak", (), {"datavalue": {"value": value}})()
+        self.removed = False
+
+    def remove(self):
+        self.removed = True
+
+
+class FakeClaims(list):
+    """Claims added by the code (prop, value) plus pre-existing ones per property."""
+    def __init__(self, existing=None):
+        super().__init__()
+        self._existing = existing or {}
+
+    def get(self, prop):
+        return self._existing.get(prop, [])
+
+
 class FakeItem:
-    def __init__(self, values=None, item_id="Q500", sitelinks=None):
-        self.claims = []
+    def __init__(self, values=None, item_id="Q500", sitelinks=None, existing_claims=None):
+        self.claims = FakeClaims(existing_claims)
         self.label = None
         self.id = item_id
         self._values = values or {}
@@ -815,8 +835,8 @@ def test_author_outage_marks_import_incomplete_and_skips_further_lookups():
     assert qid == "Q500" and item.written
     assert kg.last_import_incomplete is True
     assert calls == [("P20", "0000-0002-1825-0097")]  # no second lookup during the outage
-    assert [v for p, v in item.claims if p == "P43"] == ["Jane Doe", "John Smith"]
-    assert not any(p == "P16" for p, _ in item.claims)
+    # Neither link nor name string: the retry must not find a name string next to the link.
+    assert not any(p in ("P16", "P43") for p, _ in item.claims)
 
 
 def test_import_is_complete_when_all_lookups_work():
@@ -1023,3 +1043,55 @@ def test_zbmath_year_only_date_is_written_with_year_precision():
     )
     kg.import_paper(record)
     assert ("P28", "+2025-00-00T00:00:00Z") in item.claims
+
+
+# ---------------------------------------------------------------------------
+# One or the other: a linked person gets no name string
+# ---------------------------------------------------------------------------
+
+def test_linked_author_gets_no_name_string_unlinked_author_does():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    _author_lookups(kg, {"doe.jane.1": "Q888"})
+    kg.import_paper(_record_with_ids(
+        ["Jane Doe", "John Smith"], zbmath_ids=[("Jane Doe", "doe.jane.1")]))
+    assert ("P16", "Q888") in item.claims
+    assert [v for p, v in item.claims if p == "P43"] == ["John Smith"]
+
+
+def test_linking_an_author_removes_their_old_name_string_only():
+    jane, john = FakeClaim("Jane Doe"), FakeClaim("John Smith")
+    item = FakeItem(existing_claims={"P43": [jane, john]})
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: "Q500"
+    _author_lookups(kg, {"doe.jane.1": "Q888"})
+    kg.import_paper(_record_with_ids(
+        ["Doe, Jane", "John Smith"], zbmath_ids=[("Doe, Jane", "doe.jane.1")]))
+    assert jane.removed is True
+    assert john.removed is False
+
+
+def test_already_linked_author_still_loses_the_old_name_string():
+    jane = FakeClaim("Jane Doe")
+    item = FakeItem(values={"P16": ["Q888"]}, existing_claims={"P43": [jane]})
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: "Q500"
+    _author_lookups(kg, {"doe.jane.1": "Q888"})
+    kg.import_paper(_record_with_ids(["Jane Doe"], zbmath_ids=[("Jane Doe", "doe.jane.1")]))
+    assert not any(p == "P16" for p, _ in item.claims)  # not added twice
+    assert jane.removed is True
+
+
+def test_outage_leaves_existing_name_strings_alone():
+    from topic_overviews.http_utils import LookupUnavailableError
+    jane = FakeClaim("Jane Doe")
+    item = FakeItem(existing_claims={"P43": [jane]})
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: "Q500"
+
+    def down(prop, value, exclude_props=()):
+        raise LookupUnavailableError("503")
+    kg._sparql_find_by_value = down
+    kg.import_paper(_record_with_ids(["Jane Doe"], zbmath_ids=[("Jane Doe", "doe.jane.1")]))
+    assert jane.removed is False

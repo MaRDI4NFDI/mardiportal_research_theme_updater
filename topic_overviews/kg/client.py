@@ -435,23 +435,34 @@ LIMIT 1
             item.add_claim(M.P_MSC_ID, value=code)
         zbmath_codes = dict(getattr(record, "zbmath_author_ids", None) or [])
         orcids = dict(getattr(record, "author_orcids", None) or [])
+        linked_names: set[str] = set()
         for name in record.authors:
-            # Name strings are stored as "First Last" (zbMATH gives "Last, First").
-            item.add_claim(M.P_AUTHOR_NAME_STRING, value=normalize_author_name(name))
+            # A person is stored either as a link to an author item (found by
+            # identifier) or, failing that, as a name string "First Last"
+            # (zbMATH gives "Last, First") - never both.
+            name_string = normalize_author_name(name)
             author_qid = None
             if not self.last_import_incomplete:  # after one outage, stop asking for this paper
                 try:
                     author_qid = self._find_author(zbmath_codes.get(name), orcids.get(name))
                 except LookupUnavailableError as exc:
-                    # An outage is not "unknown person": keep the item incomplete so the
-                    # next run asks again instead of leaving the author link missing.
+                    # An outage is not "unknown person": write neither link nor name
+                    # string and keep the item incomplete, so the next run asks again
+                    # instead of leaving a name string next to the later link.
                     log.warning("Author %r not resolved, portal unavailable: %s", name, exc)
                     self.last_import_incomplete = True
-            if author_qid and author_qid not in existing_author_qids:
-                qual = Qualifiers()
-                qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=M.Q_WORKFLOW))
-                item.add_claim(M.P_AUTHOR, value=author_qid, qualifiers=qual)
-                existing_author_qids.add(author_qid)
+            if self.last_import_incomplete:
+                continue
+            if author_qid:
+                linked_names.add(name_string)
+                if author_qid not in existing_author_qids:
+                    qual = Qualifiers()
+                    qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=M.Q_WORKFLOW))
+                    item.add_claim(M.P_AUTHOR, value=author_qid, qualifiers=qual)
+                    existing_author_qids.add(author_qid)
+            else:
+                item.add_claim(M.P_AUTHOR_NAME_STRING, value=name_string)
+        self._remove_name_strings(item, linked_names)
         if tldr:
             self._add_tldr_claim(item, tldr, tldr_model_qid)
         for kw in keywords or []:
@@ -494,6 +505,19 @@ LIMIT 1
                 item.descriptions.set("en", unique)
                 return item.write().id
             raise
+
+    @staticmethod
+    def _remove_name_strings(item, names: set[str]) -> None:
+        """Remove P43 name strings equal to one of *names* (authors now linked as items)."""
+        if not names:
+            return
+        get = getattr(getattr(item, "claims", None), "get", None)
+        if not callable(get):
+            return
+        for claim in get(M.P_AUTHOR_NAME_STRING) or []:
+            value = ((claim.mainsnak.datavalue or {}).get("value") or "").strip()
+            if value in names:
+                claim.remove()
 
     def _find_author(self, zbmath_author_id: str | None, orcid: str | None) -> str | None:
         """QID of the person item with this zbMATH author ID (P676) or ORCID (P20), or None.
