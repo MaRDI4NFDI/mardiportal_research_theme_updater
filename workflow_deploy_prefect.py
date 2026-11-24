@@ -13,7 +13,7 @@ from prefect import flow
 
 _SOURCE = "https://github.com/MaRDI4NFDI/mardiportal_research_theme_updater.git"
 _IMAGE = "ghcr.io/mardi4nfdi/mardiportal_research_theme_updater:latest"
-_WORK_POOL = "K8WorkerPool"
+_WORK_POOL = "prod-k8s-pool"
 _JOB_VARIABLES = {
     "image": _IMAGE,
     "image_pull_policy": "Always",
@@ -31,6 +31,7 @@ if __name__ == "__main__":
         name="topic-overviews",
         work_pool_name=_WORK_POOL,
         job_variables=_JOB_VARIABLES,
+        cron="0 1 * * *",  # daily 01:00 UTC; re-deploying without it clears the schedule
         parameters={
             "since_days": 10,
             "harvest_limit": 0,
