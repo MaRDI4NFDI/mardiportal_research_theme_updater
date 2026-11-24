@@ -7,3 +7,8 @@ __pycache__/
 .venv/
 state.json
 docs/superpowers/
+
+# extract_formulas output
+maintenance/Q*_fulltext.md
+maintenance/Q*_formulas__*.json
+maintenance/_run_*.log
