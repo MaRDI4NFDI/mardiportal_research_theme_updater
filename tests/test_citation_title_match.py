@@ -87,3 +87,10 @@ def test_resolve_s2_references_uses_the_checked_title_match(monkeypatch):
     assert resolve_s2_references(refs, "http://sparql", API, session=s) == []
     s = _session([_hit("Q1")], {"Q1": PUBLICATION})
     assert resolve_s2_references(refs, "http://sparql", API, session=s) == ["Q1"]
+
+
+def test_crossref_user_agent_has_no_contact_by_default():
+    from topic_overviews.kg.citation_linker import crossref_user_agent
+
+    assert "mailto" not in crossref_user_agent()
+    assert crossref_user_agent("team@example.org").endswith("(mailto:team@example.org)")

@@ -365,7 +365,7 @@ def harvest_step(
 
         # 2. Crossref (publisher DOIs only — more complete than OpenAlex for journal papers)
         if not cited_qids and doi:
-            crossref = fetch_crossref_data(doi)
+            crossref = fetch_crossref_data(doi, email=openalex_email)
             cited_qids = resolve_qids_by_dois(crossref["reference_dois"], sparql_endpoint)
             if crossref["license_url"] and not config.dry_run:
                 try:

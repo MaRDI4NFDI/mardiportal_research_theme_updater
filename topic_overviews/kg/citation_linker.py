@@ -19,13 +19,18 @@ ZBMATH_API_BASE = "https://api.zbmath.org/v1"
 OPENALEX_API_URL = "https://api.openalex.org/works"
 S2_API_BASE = "https://api.semanticscholar.org/graph/v1"
 CROSSREF_API_BASE = "https://api.crossref.org/works"
-CROSSREF_USER_AGENT = "mardi-topic-overviews/1.0 (mailto:tofconrad@googlemail.com)"
+CROSSREF_CLIENT = "mardi-topic-overviews/1.0"
 MARDI_API_URL = "https://portal.mardi4nfdi.de/w/api.php"
 
 # DOI prefixes that are not registered with Crossref
 _NON_CROSSREF_DOI_PREFIXES = ("10.48550/", "10.5281/")
 
 log = logging.getLogger(__name__)
+
+
+def crossref_user_agent(email: str = "") -> str:
+    """User-Agent for Crossref; adds a contact (polite pool) only if *email* is given."""
+    return f"{CROSSREF_CLIENT} (mailto:{email})" if email else CROSSREF_CLIENT
 
 
 def fetch_zbmath_references(zbmath_id: str, *, session=None) -> list[int]:
@@ -107,7 +112,7 @@ def fetch_openalex_referenced_works_by_arxiv(arxiv_id: str, *, session=None, ema
         return []
 
 
-def fetch_crossref_data(doi: str, *, session=None) -> dict:
+def fetch_crossref_data(doi: str, *, session=None, email: str = "") -> dict:
     """Fetch metadata from the Crossref REST API for a paper identified by DOI.
 
     Returns a dict with keys ``reference_dois`` (list[str]) and ``license_url`` (str).
@@ -121,7 +126,7 @@ def fetch_crossref_data(doi: str, *, session=None) -> dict:
     try:
         resp = sess.get(
             f"{CROSSREF_API_BASE}/{doi}",
-            headers={"User-Agent": CROSSREF_USER_AGENT},
+            headers={"User-Agent": crossref_user_agent(email)},
             timeout=30,
         )
         if resp.status_code == 404:
@@ -139,9 +144,9 @@ def fetch_crossref_data(doi: str, *, session=None) -> dict:
         return empty
 
 
-def fetch_crossref_references(doi: str, *, session=None) -> list[str]:
+def fetch_crossref_references(doi: str, *, session=None, email: str = "") -> list[str]:
     """Return DOIs of works cited by this paper. Convenience wrapper around fetch_crossref_data."""
-    return fetch_crossref_data(doi, session=session)["reference_dois"]
+    return fetch_crossref_data(doi, session=session, email=email)["reference_dois"]
 
 
 def resolve_qids_by_dois(
