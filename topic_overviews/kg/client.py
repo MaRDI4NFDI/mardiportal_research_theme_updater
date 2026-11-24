@@ -111,6 +111,10 @@ class KGClient:
         # Set by import_paper: True when a lookup failed during the import (e.g. an
         # author search hit a portal outage), so the item is not yet complete.
         self.last_import_incomplete = False
+        # Filled by prefetch_known: positive lookup results only, so a paper that
+        # is not in it is still looked up live (the SPARQL index lags behind writes).
+        self._lookup_cache: dict[tuple[str, str, tuple[str, ...]], str] = {}
+        self._tldr_known: set[str] = set()
 
     def _get_session(self) -> requests.Session:
         if self._session is None:
@@ -146,6 +150,108 @@ class KGClient:
         existing = self.mc.search_entity_by_value(M.P_ARXIV_ID, arxiv_id)
         return existing[0] if existing else None
 
+    @staticmethod
+    def _lookup_specs(record: PaperRecord) -> list[tuple[str, str, tuple[str, ...]]]:
+        """(property, value, excluded properties) lookups that identify ``record``, in order.
+
+        arXiv items and published (zbMATH) items are separate on the portal and
+        must stay separate. An arXiv record is matched only by its arXiv ID or
+        its arXiv DOI and ignores items with P225/P1451; every other record
+        ignores items with P21 on the shared lookups (publisher DOI, OpenAlex ID).
+        Empty values are left out.
+        """
+        if record.arxiv_id:
+            # A preprint is matched only on identifiers that belong to the
+            # preprint: its arXiv ID and its arXiv DOI. The publisher DOI and
+            # the OpenAlex ID (OpenAlex often describes the published article)
+            # identify the published item, so they are never used here.
+            own_ids = [(M.P_ARXIV_ID, record.arxiv_id)]
+            exclude = (M.P_ZBMATH_ID, M.P_ZBMATH_DE_NUMBER)
+            shared_ids = [(M.P_DOI, paper_doi(record))]
+            own_exclude: tuple[str, ...] = ()
+        else:
+            own_ids = [
+                (M.P_ZBMATH_ID, getattr(record, "zbmath_id", "")),
+                (M.P_ZBMATH_DE_NUMBER, getattr(record, "zbmath_de_number", "")),
+            ]
+            exclude = (M.P_ARXIV_ID,)
+            shared_ids = [
+                (M.P_DOI, paper_doi(record)),
+                (M.P_OPENALEX_ID, getattr(record, "openalex_id", "")),
+            ]
+            own_exclude = ()
+        return (
+            [(p, v, own_exclude) for p, v in own_ids if v]
+            + [(p, v, exclude) for p, v in shared_ids if v]
+        )
+
+    def prefetch_known(self, records, batch_size: int = 100) -> int:
+        """Look up many records at once; later lookups for them are answered from memory.
+
+        One SPARQL query per property and batch of ``batch_size`` identifiers
+        replaces the per-paper search and item load for papers the KG already
+        has. Only found items are remembered: a paper that is missing here is
+        still looked up live, because the SPARQL index can lag behind recent
+        writes. Any failure leaves the cache as it is and the run unchanged.
+        Returns the number of identifiers found.
+        """
+        groups: dict[tuple[str, tuple[str, ...]], set[str]] = {}
+        for record in records:
+            for prop, value, exclude in self._lookup_specs(record):
+                key = (prop, value, exclude)
+                if key in self._lookup_cache:
+                    continue
+                # The value goes into a SPARQL string literal; real identifiers
+                # never contain these characters.
+                if any(c in value for c in '"\\\n\r\t '):
+                    continue
+                groups.setdefault((prop, exclude), set()).add(value)
+
+        found = 0
+        for (prop, exclude), values in groups.items():
+            ordered = sorted(values)
+            for i in range(0, len(ordered), batch_size):
+                chunk = ordered[i:i + batch_size]
+                try:
+                    found += self._prefetch_chunk(prop, exclude, chunk)
+                except Exception as exc:
+                    log.warning(
+                        "Batch lookup of %d %s value(s) failed (%s) — looking them up one by one",
+                        len(chunk), prop, exc,
+                    )
+        return found
+
+    def _prefetch_chunk(self, prop: str, exclude: tuple[str, ...], values: list[str]) -> int:
+        exclusions = "".join(
+            f"\n  FILTER NOT EXISTS {{ ?item wdt:{p} [] }}" for p in exclude
+        )
+        listed = " ".join(f'"{v}"' for v in values)
+        query = f"""
+PREFIX wdt: <https://portal.mardi4nfdi.de/prop/direct/>
+SELECT ?id ?item ?tldr WHERE {{
+  VALUES ?id {{ {listed} }}
+  ?item wdt:{prop} ?id .{exclusions}
+  OPTIONAL {{ ?item wdt:{M.P_TLDR} ?tldr }}
+}}
+"""
+        resp = http_get(
+            requests,
+            self._sparql_endpoint,
+            params={"query": query, "format": "json"},
+            headers={"Accept": "application/sparql-results+json"},
+            timeout=60,
+        )
+        found = 0
+        for row in resp.json().get("results", {}).get("bindings", []):
+            value = row["id"]["value"]
+            qid = row["item"]["value"].rstrip("/").rsplit("/", 1)[-1]
+            if (prop, value, exclude) not in self._lookup_cache:
+                self._lookup_cache[(prop, value, exclude)] = qid
+                found += 1
+            if "tldr" in row:
+                self._tldr_known.add(qid)
+        return found
+
     def find_existing_paper(self, record: PaperRecord) -> str | None:
         """Return QID of an existing paper item matching any known identifier, or None.
 
@@ -169,34 +275,10 @@ class KGClient:
         endpoint (wikibaseintegrator defaults to Wikidata when its global config
         is not initialised in the current process).
         """
-        if record.arxiv_id:
-            # A preprint is matched only on identifiers that belong to the
-            # preprint: its arXiv ID and its arXiv DOI. The publisher DOI and
-            # the OpenAlex ID (OpenAlex often describes the published article)
-            # identify the published item, so they are never used here.
-            own_ids = [(M.P_ARXIV_ID, record.arxiv_id)]
-            exclude = (M.P_ZBMATH_ID, M.P_ZBMATH_DE_NUMBER)
-            shared_ids = [(M.P_DOI, paper_doi(record))]
-        else:
-            own_ids = [
-                (M.P_ZBMATH_ID, getattr(record, "zbmath_id", "")),
-                (M.P_ZBMATH_DE_NUMBER, getattr(record, "zbmath_de_number", "")),
-            ]
-            exclude = (M.P_ARXIV_ID,)
-            shared_ids = [
-                (M.P_DOI, paper_doi(record)),
-                (M.P_OPENALEX_ID, getattr(record, "openalex_id", "")),
-            ]
-        for prop, value in own_ids:
-            if value:
-                qid = self._sparql_find_by_value(prop, value)
-                if qid:
-                    return qid
-        for prop, value in shared_ids:
-            if value:
-                qid = self._sparql_find_by_value(prop, value, exclude_props=exclude)
-                if qid:
-                    return qid
+        for prop, value, exclude in self._lookup_specs(record):
+            qid = self._sparql_find_by_value(prop, value, exclude_props=exclude)
+            if qid:
+                return qid
 
         doi = record.doi or ""
         if doi.lower().startswith("10.5281/zenodo.") and record.title:
@@ -224,6 +306,9 @@ class KGClient:
         Identifier values (DOI, arXiv ID, etc.) never contain quotes, so plain
         string interpolation into the SPARQL query is safe here.
         """
+        cached = self._lookup_cache.get((prop, value, tuple(exclude_props)))
+        if cached:
+            return cached
         failures: list[Exception] = []
         # --- CirrusSearch (fast, near real-time) ---
         try:
@@ -365,6 +450,8 @@ LIMIT 1
 
     def paper_has_tldr(self, paper_qid: str) -> bool:
         """Return whether the paper item already has a TL;DR claim."""
+        if paper_qid in self._tldr_known:
+            return True
         item = self.mc.item.get(entity_id=paper_qid)
         return bool(item.get_value(M.P_TLDR))
 

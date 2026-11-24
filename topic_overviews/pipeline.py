@@ -101,6 +101,38 @@ def _zbmath_query_configs(config: Config, topics: list[Topic]) -> list[tuple[str
     return result
 
 
+def _prefetched(records, kg, size: int = 100):
+    """Yield ``records`` unchanged, asking the KG about each batch of ``size`` first.
+
+    ``kg.prefetch_known`` answers the "is this paper already in the KG" lookups
+    for the whole batch in one query. Records are still read lazily, one batch
+    ahead: an early stop of the harvest and a failure on a later page behave as
+    before, and the records read before a failure are still yielded first.
+    """
+    prefetch = getattr(kg, "prefetch_known", None)
+    it = iter(records)
+    while True:
+        batch = []
+        error = None
+        try:
+            for record in it:
+                batch.append(record)
+                if len(batch) >= size:
+                    break
+        except Exception as exc:
+            error = exc
+        if batch and callable(prefetch):
+            try:
+                prefetch(batch)
+            except Exception as exc:
+                log.warning("Batch lookup in the KG failed (%s) — looking papers up one by one", exc)
+        yield from batch
+        if error is not None:
+            raise error
+        if len(batch) < size:
+            return
+
+
 def _link_preprint(kg, record, paper_qid: str, lookup_zb=None):
     """Link an arXiv item and its published zbMATH item via P1676 (preprint of).
 
@@ -438,7 +470,7 @@ def harvest_step(
                 ", ".join(f"{t.label} ({t.qid})" for t in covering),
             )
             query_imported = 0
-            for record in _fetch_zb(zb_query, zb_since_days):
+            for record in _prefetched(_fetch_zb(zb_query, zb_since_days), kg):
                 try:
                     if record.doi or record.arxiv_id:
                         oa_enrichment = _lookup_oa_enrichment(
@@ -493,7 +525,7 @@ def harvest_step(
                 ", ".join(f"{t.label} ({t.qid})" for t in covering),
             )
             query_imported = 0
-            for record in _fetch_oa(oa_query, oa_since_days):
+            for record in _prefetched(_fetch_oa(oa_query, oa_since_days), kg):
                 try:
                     did_import = _process(record, "OpenAlex", covering, lookup_zb=_lookup_zb)
                 except PipelineError:
@@ -532,7 +564,7 @@ def harvest_step(
         )
         query_imported = 0
         try:
-            for record in fetch(harvest_config):
+            for record in _prefetched(fetch(harvest_config), kg):
                 try:
                     did_import = _process(record, "arXiv", covering, lookup_zb=_lookup_zb)
                 except PipelineError:
