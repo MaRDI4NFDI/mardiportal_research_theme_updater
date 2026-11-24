@@ -17,7 +17,10 @@ _WORK_POOL = "K8WorkerPool"
 _JOB_VARIABLES = {
     "image": _IMAGE,
     "image_pull_policy": "Always",
-    "env": {"PREFECT_LOGGING_EXTRA_LOGGERS": "topic_overviews"},
+    "env": {
+        "PREFECT_LOGGING_EXTRA_LOGGERS": "topic_overviews",
+        "LAKEFS_URL": "https://lake-bioinfmed.zib.de",
+    },
 }
 
 if __name__ == "__main__":
