@@ -92,10 +92,16 @@ def clean_description(text: str) -> str:
     return text.strip()
 
 
+_DOI_PREFIX = re.compile(r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)", re.IGNORECASE)
+
+
 def extract_doi(uid: str | None) -> str | None:
-    if uid and uid.startswith("https://doi.org/"):
-        return uid[len("https://doi.org/"):]
-    return None
+    """Bare DOI in upper case (the portal's convention), or None if *uid* is no DOI.
+
+    Accepts ``https://doi.org/…``, ``http://dx.doi.org/…``, ``doi:…`` and bare ``10.…``.
+    """
+    doi = _DOI_PREFIX.sub("", (uid or "").strip()).strip()
+    return doi.upper() if doi.startswith("10.") else None
 
 
 def extract_hf_id(links: list[str]) -> str | None:
