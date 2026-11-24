@@ -20,6 +20,7 @@ from ..kg.names import normalize_orcid
 from .arxiv_oai import PaperRecord
 
 OPENALEX_API_URL = "https://api.openalex.org/works"
+ARXIV_DOI_PREFIX = "10.48550/"
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,19 @@ def _arxiv_id_from_work(w: dict) -> str:
         if url.startswith("https://arxiv.org/abs/"):
             return _strip_prefix(url, "https://arxiv.org/abs/").strip()
     return ""
+
+
+def _is_published_version(doi: str | None, journal_title: str) -> bool:
+    """True if the OpenAlex work describes a published article, not just a preprint.
+
+    OpenAlex merges a preprint and its journal version into one work, so an arXiv
+    ID on the work does not make its date, journal, open-access status, concepts
+    or OpenAlex ID facts about the preprint. A publisher DOI (anything but an
+    arXiv DOI) or a journal marks the work as the published version.
+    """
+    if journal_title:
+        return True
+    return bool(doi) and not doi.lower().startswith(ARXIV_DOI_PREFIX)
 
 
 def parse_works_page(works: list[dict]) -> list[PaperRecord]:
@@ -100,8 +114,15 @@ def parse_works_page(works: list[dict]) -> list[PaperRecord]:
             k["display_name"] for k in (w.get("keywords") or [])
             if k.get("display_name")
         ]
+        # The portal keeps preprint and published article as separate items linked by
+        # P1676. A merged work becomes the published record; its arXiv ID is kept only
+        # to link to the preprint item (never written as P21 on the published item).
+        preprint_arxiv_id = ""
+        if arxiv_id and _is_published_version(doi, journal_title):
+            preprint_arxiv_id, arxiv_id = arxiv_id, ""
         records.append(PaperRecord(
             arxiv_id=arxiv_id,
+            preprint_arxiv_id=preprint_arxiv_id,
             title=(w.get("title") or "").strip(),
             abstract=_reconstruct_abstract(w.get("abstract_inverted_index")),
             authors=[a for a in authors if a],

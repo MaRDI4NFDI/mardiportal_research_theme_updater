@@ -96,10 +96,13 @@ def test_reconstruct_abstract_empty():
     assert _reconstruct_abstract({}) == ""
 
 def test_parse_works_page_with_arxiv_id():
+    """A merged work (publisher DOI + journal) is the published version: the arXiv
+    ID is only kept to link to the preprint item, never as the record's own ID."""
     records = parse_works_page([WORK_WITH_ARXIV])
     assert len(records) == 1
     r = records[0]
-    assert r.arxiv_id == "2606.01234"
+    assert r.arxiv_id == ""
+    assert r.preprint_arxiv_id == "2606.01234"
     assert r.openalex_id == "W1111111111"
     assert r.title == "A Paper on MaRDI"
     assert r.abstract == "We study MaRDI"
@@ -107,7 +110,7 @@ def test_parse_works_page_with_arxiv_id():
     assert r.published == "2026-06-15"
     assert r.doi == "10.1000/xyz"
     assert r.journal_title == "SIAM Journal on Computing"
-    assert r.record_id == "2606.01234"   # arxiv_id takes precedence
+    assert r.record_id == "openalex:W1111111111"
 
 def test_parse_works_page_without_arxiv_id():
     records = parse_works_page([WORK_WITHOUT_ARXIV])
@@ -129,7 +132,7 @@ def test_fetch_stops_at_date_boundary():
     ))
     # cutoff = 2026-06-11; WORK_WITH_ARXIV (06-15) kept, WORK_OLD (2025-01-01) stops iteration
     assert len(records) == 1
-    assert records[0].arxiv_id == "2606.01234"
+    assert records[0].preprint_arxiv_id == "2606.01234"
 
 def test_fetch_adds_date_filter_to_api_call():
     session = FakeSession([_page([])])
@@ -268,3 +271,47 @@ def test_authorship_orcids_are_taken_from_openalex_not_searched_by_name():
 
 def test_work_without_orcids_has_no_author_orcids():
     assert parse_works_page([WORK_WITH_ARXIV])[0].author_orcids == []
+
+
+def _work(**over):
+    w = {
+        "id": "https://openalex.org/W5", "title": "T", "authorships": [],
+        "publication_date": "2026-06-15", "abstract_inverted_index": {},
+        "ids": {"arxiv": "https://arxiv.org/abs/2606.05555"},
+        "doi": "https://doi.org/10.48550/arXiv.2606.05555",
+        "primary_location": {"source": {"display_name": "arXiv", "type": "repository"}},
+    }
+    w.update(over)
+    return w
+
+
+def test_preprint_only_work_stays_an_arxiv_record():
+    r = parse_works_page([_work()])[0]
+    assert r.arxiv_id == "2606.05555"
+    assert r.preprint_arxiv_id == ""
+    assert r.record_id == "2606.05555"
+
+
+def test_arxiv_doi_in_any_case_counts_as_preprint():
+    r = parse_works_page([_work(doi="https://doi.org/10.48550/ARXIV.2606.05555")])[0]
+    assert r.arxiv_id == "2606.05555"
+
+
+def test_work_without_doi_stays_an_arxiv_record():
+    r = parse_works_page([_work(doi=None)])[0]
+    assert r.arxiv_id == "2606.05555"
+
+
+def test_publisher_doi_without_journal_is_published_version():
+    """E.g. a conference paper: DOI of the proceedings, source type is not 'journal'."""
+    r = parse_works_page([_work(doi="https://doi.org/10.1145/3000000")])[0]
+    assert r.arxiv_id == ""
+    assert r.preprint_arxiv_id == "2606.05555"
+    assert r.doi == "10.1145/3000000"
+
+
+def test_journal_without_doi_is_published_version():
+    w = _work(doi=None, primary_location={"source": {"display_name": "J. Foo", "type": "journal"}})
+    r = parse_works_page([w])[0]
+    assert r.arxiv_id == ""
+    assert r.preprint_arxiv_id == "2606.05555"
