@@ -25,6 +25,24 @@ NS = {
 }
 
 
+# arXiv throttles with 429; 502/503/504 are outages. Both are retried.
+_RETRY_STATUS = (429, 502, 503, 504)
+_MAX_ATTEMPTS = 5
+# Pauses between the attempts: ten minutes in total, then the query is given up
+# (it is harvested again on the next run).
+_BACKOFF = (60, 120, 180, 240)
+_MAX_RETRY_AFTER = 300  # cap on a server-requested Retry-After wait
+
+
+def _retry_after(resp) -> int | None:
+    """Seconds from a numeric Retry-After header, capped; None if absent or unusable."""
+    try:
+        seconds = int(float(resp.headers.get("Retry-After", "")))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return min(seconds, _MAX_RETRY_AFTER) if seconds > 0 else None
+
+
 def _norm(text: str | None) -> str:
     return " ".join(text.split()) if text else ""
 
@@ -79,7 +97,7 @@ def search_records(
             page_size,
             cutoff_s,
         )
-        for attempt in range(5):
+        for attempt in range(_MAX_ATTEMPTS):
             resp = session.get(
                 ARXIV_API_URL,
                 params={
@@ -91,21 +109,23 @@ def search_records(
                 },
                 timeout=60,
             )
-            if resp.status_code in (429, 503, 502, 504):
-                wait = 60 * (2 ** attempt)
+            if resp.status_code in _RETRY_STATUS:
+                if attempt == _MAX_ATTEMPTS - 1:
+                    # Out of attempts: fail now instead of waiting once more.
+                    log.warning(
+                        "arXiv returned %d for query=%r (attempt %d/%d); giving up",
+                        resp.status_code, query, attempt + 1, _MAX_ATTEMPTS,
+                    )
+                    break
+                wait = _retry_after(resp) or _BACKOFF[attempt]
                 log.warning(
-                    "arXiv returned %d for query=%r (attempt %d/5); waiting %ds",
-                    resp.status_code,
-                    query,
-                    attempt + 1,
-                    wait,
+                    "arXiv returned %d for query=%r (attempt %d/%d); waiting %ds",
+                    resp.status_code, query, attempt + 1, _MAX_ATTEMPTS, wait,
                 )
                 sleep(wait)
                 continue
-            resp.raise_for_status()
             break
-        else:
-            resp.raise_for_status()
+        resp.raise_for_status()
         records = parse_atom(resp.text)
         log.info("Got %d arXiv results for query=%r", len(records), query)
         if not records:

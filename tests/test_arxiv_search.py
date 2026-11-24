@@ -85,3 +85,76 @@ def test_search_logs_fetch_and_result_count(caplog):
         )
     assert "Fetching arXiv results for query='cat:math.NA' start=0 page_size=100 cutoff=2026-06-11" in caplog.text
     assert "Got 2 arXiv results for query='cat:math.NA'" in caplog.text
+
+
+class StatusResp:
+    """Response with a status code; raises HTTPError for 4xx/5xx like requests."""
+
+    def __init__(self, status, text="", headers=None):
+        self.status_code = status
+        self.text = text
+        self.headers = headers or {}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import requests
+            raise requests.exceptions.HTTPError(f"{self.status_code} error", response=self)
+
+
+class ScriptedSession:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    def get(self, url, params=None, timeout=None):
+        self.calls += 1
+        return self._responses.pop(0)
+
+
+def _search(session, sleeps):
+    return list(search_records(
+        "cat:math.NA", since_days=10, session=session,
+        sleep=sleeps.append, today=datetime.date(2026, 6, 21),
+    ))
+
+
+def test_search_retries_429_then_succeeds():
+    import pytest  # noqa: F401
+    sleeps = []
+    session = ScriptedSession([StatusResp(429), StatusResp(503), StatusResp(200, ATOM)])
+    got = _search(session, sleeps)
+    assert [r.arxiv_id for r in got] == ["2606.01234"]
+    assert session.calls == 3
+    assert sleeps[:2] == [60, 120]  # backoff between attempts (3s politeness pause after)
+
+
+def test_search_gives_up_after_last_attempt_without_waiting_again():
+    import pytest
+    sleeps = []
+    session = ScriptedSession([StatusResp(429)] * 5)
+    with pytest.raises(Exception, match="429"):
+        _search(session, sleeps)
+    assert session.calls == 5
+    assert sleeps == [60, 120, 180, 240]  # four pauses, none after the fifth attempt
+    assert sum(sleeps) == 600
+
+
+def test_search_honours_retry_after_header_with_cap():
+    sleeps = []
+    session = ScriptedSession([
+        StatusResp(429, headers={"Retry-After": "17"}),
+        StatusResp(429, headers={"Retry-After": "99999"}),
+        StatusResp(429, headers={"Retry-After": "soon"}),  # unusable: fall back to backoff
+        StatusResp(200, ATOM),
+    ])
+    _search(session, sleeps)
+    assert sleeps[:3] == [17, 300, 180]
+
+
+def test_search_does_not_retry_other_errors():
+    import pytest
+    sleeps = []
+    session = ScriptedSession([StatusResp(400)])
+    with pytest.raises(Exception, match="400"):
+        _search(session, sleeps)
+    assert session.calls == 1 and sleeps == []
