@@ -112,6 +112,20 @@ def topic_overviews(
         lakefs_branch=_LAKEFS_BRANCH,
     )
 
+    missing_lakefs = [
+        name for name, value in (
+            ("LAKEFS_URL", config.lakefs_url),
+            ("lakefs-user secret", config.lakefs_user),
+            ("lakefs-password secret", config.lakefs_password),
+        ) if not value
+    ]
+    if missing_lakefs and not themes_only:
+        logger.warning(
+            "lakeFS is NOT configured (missing: %s): fulltext uploads and the rejection "
+            "store are disabled, so rejected papers are classified again on every run",
+            ", ".join(missing_lakefs),
+        )
+
     model = ""
     if not themes_only:
         assert_openai_compatible_server_available(_OPENAI_BASE_URL, api_key=openai_api_key)

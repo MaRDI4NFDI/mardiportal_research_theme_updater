@@ -110,13 +110,23 @@ class RejectionStore:
         return {"version": FORMAT_VERSION, "rejected": self._rejected}
 
 
+def _missing_settings(url: str, user: str, repo: str) -> list[str]:
+    """Names of the lakeFS settings that are empty."""
+    return [name for name, value in (("url", url), ("user", user), ("repo", repo)) if not value]
+
+
 def load_store(
     *, url: str, user: str, password: str, repo: str, branch: str = "main",
     skip_known: bool = True, path: str = STATE_PATH,
 ) -> RejectionStore:
     """Read the store from lakeFS; an empty store if missing or unreachable."""
-    if not (url and user and repo):
-        log.info("Rejection store: lakeFS not configured — classifying every paper")
+    missing = _missing_settings(url, user, repo)
+    if missing:
+        log.warning(
+            "Rejection store DISABLED: lakeFS not configured (missing %s) — "
+            "classifying every paper and not saving any decisions",
+            ", ".join(missing),
+        )
         return RejectionStore(skip_known=skip_known)
     try:
         import lakefs
@@ -149,7 +159,13 @@ def save_store(
     if not store.dirty:
         log.info("Rejection store: unchanged — nothing to save")
         return False
-    if not (url and user and repo):
+    missing = _missing_settings(url, user, repo)
+    if missing:
+        log.warning(
+            "Rejection store: %d entries (%d new this run) NOT saved — lakeFS not configured "
+            "(missing %s); they will be classified again on the next run",
+            len(store), store.added, ", ".join(missing),
+        )
         return False
     try:
         import lakefs

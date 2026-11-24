@@ -236,3 +236,16 @@ def test_keyword_match_bypasses_store():
         lookup_zb=lambda arxiv_id: None, rejections=store,
     )
     assert kg.imported == [P1.arxiv_id]   # keyword rule wins over a stored rejection
+
+
+def test_unconfigured_lakefs_warns_on_load_and_save(caplog):
+    import logging
+    from topic_overviews.rejection_store import load_store, save_store
+
+    with caplog.at_level(logging.WARNING):
+        store = load_store(url="", user="", password="", repo="r")
+        store.add("fp", "rid")
+        assert save_store(store, url="", user="", password="", repo="r") is False
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("DISABLED" in m and "url, user" in m for m in messages)
+    assert any("NOT saved" in m and "1 new" in m for m in messages)
