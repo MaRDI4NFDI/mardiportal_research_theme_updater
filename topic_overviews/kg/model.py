@@ -57,6 +57,7 @@ OA_STATUS_MAP: dict[str, str] = {
 }
 
 # Classes
+Q_HUMAN = "Q57162"                # human (copy of Wikidata Q5); instance of value of person items
 Q_SCHOLARLY_ARTICLE = "Q56887"
 Q_SCIENTIFIC_JOURNAL = "Q56973"   # scientific journal (used to filter P200 journal lookups)
 Q_PREPRINT = "Q159099"

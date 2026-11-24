@@ -45,7 +45,7 @@ class FakeItem:
     @property
     def labels(self): return FakeItem._Labels(self)
 
-    def add_claim(self, prop, value=None, action="append_or_replace"):
+    def add_claim(self, prop, value=None, action="append_or_replace", qualifiers=None):
         self.claims.append((prop, value))
 
     def get_value(self, prop):
@@ -89,7 +89,7 @@ def test_import_new_paper_writes_only_paper_statements():
     assert ("P31", "Q56887") in item.claims          # instance of scholarly article
     assert ("P1460", "Q5976449") in item.claims      # MaRDI publication profile type
     assert ("P21", "2401.00001") in item.claims         # arXiv id
-    assert ("P27", "10.1000/XYZ") in item.claims        # DOI
+    assert ("P27", "10.48550/ARXIV.2401.00001") in item.claims  # arXiv DOI, not the journal DOI
     assert ("P159", "A New Bound for Online Caching") in item.claims
     assert ("P28", "+2024-01-02T00:00:00Z") in item.claims
     assert ("P22", "math.OC") in item.claims
@@ -356,7 +356,7 @@ def test_find_existing_arxiv_record_skips_zbmath_items_on_shared_ids():
     calls = _recording_lookup(kg)
     kg.find_existing_paper(PAPER)
     assert calls[0] == ("P21", "2401.00001", ())
-    assert ("P27", "10.1000/XYZ", ("P225", "P1451")) in calls
+    assert ("P27", "10.48550/ARXIV.2401.00001", ("P225", "P1451")) in calls
 
 
 def test_find_existing_zbmath_record_skips_arxiv_items_on_shared_ids():
@@ -429,11 +429,16 @@ def test_import_paper_writes_doi_uppercase():
     kg = KGClient(FakeMC(item=item))
     kg.find_existing_paper = lambda record: None
     kg.import_paper(PAPER)
-    assert ("P27", "10.1000/XYZ") in item.claims
+    assert ("P27", "10.48550/ARXIV.2401.00001") in item.claims
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(ZB_PAPER)
+    assert ("P27", "10.1000/XYZ") in item.claims  # published item keeps the publisher DOI
 
 
 def test_import_paper_skips_case_variant_of_existing_doi():
-    item = FakeItem(values={"P27": ["10.1000/xyz"]})
+    item = FakeItem(values={"P27": ["10.48550/arXiv.2401.00001"]})
     kg = KGClient(FakeMC(item=item))
     kg.find_existing_paper = lambda record: "Q500"
     kg.import_paper(PAPER)
@@ -444,7 +449,10 @@ def test_find_existing_looks_up_doi_uppercase():
     kg = KGClient(FakeMC())
     calls = _recording_lookup(kg)
     kg.find_existing_paper(PAPER)
-    assert ("P27", "10.1000/XYZ", ("P225", "P1451")) in calls
+    assert ("P27", "10.48550/ARXIV.2401.00001", ("P225", "P1451")) in calls
+    calls = _recording_lookup(kg)
+    kg.find_existing_paper(ZB_PAPER)
+    assert ("P27", "10.1000/XYZ", ("P21",)) in calls
 
 
 def test_import_paper_keeps_existing_title():
@@ -571,3 +579,117 @@ class TestEnforceThemeLimitEdgeCases:
         # 3 links but only 2 distinct papers: within the limit, only the duplicate goes.
         assert self._client(session).enforce_theme_limit("Q9999", max_papers=2) == 1
         assert self._removed_claims(session) == {"Q9999$Q5"}
+
+
+# ---------------------------------------------------------------------------
+# Preprint and published item stay apart (docs: "What a bot must never do")
+# ---------------------------------------------------------------------------
+
+def test_arxiv_record_never_looks_up_publisher_doi_or_openalex_id():
+    record = PaperRecord(
+        arxiv_id="2401.00001", title="T", abstract="", authors=[], categories=[],
+        published="2024-01-02", doi="10.1007/s00211-020-01234-5", openalex_id="W123",
+    )
+    kg = KGClient(FakeMC())
+    calls = _recording_lookup(kg)
+    kg.find_existing_paper(record)
+    looked_up = [(prop, value) for prop, value, _ in calls]
+    assert looked_up == [("P21", "2401.00001"), ("P27", "10.48550/ARXIV.2401.00001")]
+
+
+def test_arxiv_record_with_publisher_doi_does_not_match_the_published_item():
+    """The publisher DOI is on the Crossref item; the arXiv record must not find it."""
+    record = PaperRecord(
+        arxiv_id="2401.00001", title="T", abstract="", authors=[], categories=[],
+        published="2024-01-02", doi="10.1007/s00211-020-01234-5",
+    )
+    kg = KGClient(FakeMC())
+    _recording_lookup(kg, hits={"P27": None})  # preprint DOI not in KG; publisher DOI would hit
+    kg._sparql_find_by_value = lambda prop, value, exclude_props=(): (
+        "Q_PUBLISHED" if (prop, value) == ("P27", "10.1007/S00211-020-01234-5") else None
+    )
+    assert kg.find_existing_paper(record) is None
+
+
+def test_import_paper_writes_publisher_doi_never_onto_an_arxiv_item():
+    record = PaperRecord(
+        arxiv_id="2401.00001", title="T", abstract="", authors=[], categories=[],
+        published="2024-01-02", doi="10.1007/s00211-020-01234-5",
+    )
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(record)
+    dois = [v for p, v in item.claims if p == "P27"]
+    assert dois == ["10.48550/ARXIV.2401.00001"]
+
+
+def test_write_missing_identifiers_writes_arxiv_doi_not_publisher_doi(monkeypatch):
+    record = PaperRecord(
+        arxiv_id="2401.00001", title="T", abstract="", authors=[], categories=[],
+        published="2024-01-02", doi="10.1007/s00211-020-01234-5",
+    )
+    kg = KGClient(FakeMC(), api_url="http://api")
+    posts = _fake_http(monkeypatch, kg, {})
+    kg.write_missing_identifiers("Q500", record)
+    values = {p["property"]: json.loads(p["value"]) for p in posts}
+    assert values["P27"] == "10.48550/ARXIV.2401.00001"
+
+
+def test_paper_doi():
+    from topic_overviews.kg.client import paper_doi
+    arxiv = PaperRecord(arxiv_id="2401.00001", title="", abstract="", authors=[],
+                        categories=[], published="", doi="10.1007/x")
+    assert paper_doi(arxiv) == "10.48550/ARXIV.2401.00001"
+    assert paper_doi(ZB_PAPER) == "10.1000/XYZ"
+    no_doi = PaperRecord(arxiv_id="", title="", abstract="", authors=[],
+                         categories=[], published="", doi=None, openalex_id="W1")
+    assert paper_doi(no_doi) == ""
+
+
+# ---------------------------------------------------------------------------
+# Authors: name strings are "First Last"; zbMATH author IDs are matched first
+# ---------------------------------------------------------------------------
+
+def _zb_record(authors, codes):
+    return PaperRecord(
+        arxiv_id="", title="A Paper", abstract="", authors=authors, categories=[],
+        published="2025-01-01", doi="10.1000/p", zbmath_id="1.2", zbmath_de_number="9",
+        zbmath_author_ids=codes,
+    )
+
+
+def test_name_strings_are_written_first_last():
+    item = FakeItem()
+    kg = KGClient(FakeMC(item=item))
+    kg.find_existing_paper = lambda record: None
+    kg.import_paper(_zb_record(["Doe, Jane", "John Smith"], []))
+    names = [v for p, v in item.claims if p == "P43"]
+    assert names == ["Jane Doe", "John Smith"]
+
+
+def test_author_matched_by_zbmath_author_id_before_name():
+    item = FakeItem()
+    resolver = MagicMock()
+    kg = KGClient(FakeMC(item=item), author_resolver=resolver)
+    kg.find_existing_paper = lambda record: None
+    lookups = []
+    kg._sparql_find_by_value = lambda prop, value, exclude_props=(): (
+        lookups.append((prop, value)) or ("Q777" if value == "doe.jane.1" else None)
+    )
+    kg.import_paper(_zb_record(["Doe, Jane"], [("Doe, Jane", "doe.jane.1")]))
+    assert ("P16", "Q777") in item.claims
+    assert ("P676", "doe.jane.1") in lookups
+    resolver.resolve.assert_not_called()
+
+
+def test_author_without_zbmath_match_falls_back_to_name_resolver():
+    item = FakeItem()
+    resolver = MagicMock()
+    resolver.resolve.return_value = "Q888"
+    kg = KGClient(FakeMC(item=item), author_resolver=resolver)
+    kg.find_existing_paper = lambda record: None
+    kg._sparql_find_by_value = lambda prop, value, exclude_props=(): None
+    kg.import_paper(_zb_record(["Doe, Jane"], [("Doe, Jane", "doe.jane.1")]))
+    resolver.resolve.assert_called_once_with("Doe, Jane")
+    assert ("P16", "Q888") in item.claims

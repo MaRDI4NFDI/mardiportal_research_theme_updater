@@ -18,7 +18,7 @@ from wikibaseintegrator.models import Qualifiers
 
 from ..harvest.arxiv_oai import PaperRecord
 from . import model as M
-from .author_resolver import AuthorResolver
+from .author_resolver import AuthorResolver, normalize_author_name
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +40,19 @@ def normalize_doi(doi: str | None) -> str:
     another case variant would add a second P27 claim for the same DOI.
     """
     return (doi or "").strip().upper()
+
+
+def paper_doi(record) -> str:
+    """DOI that belongs on the item we write for ``record``, in canonical form.
+
+    An arXiv preprint is its own item with the arXiv DOI
+    (``10.48550/ARXIV.<id>``), never the publisher DOI of the article published
+    from it: that DOI identifies the published item, and importers that look
+    items up by DOI would otherwise take the preprint for the publication.
+    """
+    if getattr(record, "arxiv_id", ""):
+        return normalize_doi(f"10.48550/arXiv.{record.arxiv_id}")
+    return normalize_doi(record.doi)
 
 
 class KGClient:
@@ -102,9 +115,9 @@ class KGClient:
         same paper is never imported twice regardless of which source provided it.
 
         arXiv items and published (zbMATH) items are separate on the portal and
-        usually share the publisher DOI. The shared-identifier lookups therefore
-        never match an item of the other kind: an arXiv record ignores items with
-        P225/P1451, every other record ignores items with P21.
+        must stay separate. An arXiv record is matched only by its arXiv ID or
+        its arXiv DOI and ignores items with P225/P1451; every other record
+        ignores items with P21 on the shared lookups (publisher DOI, OpenAlex ID).
 
         For Zenodo DOIs (10.5281/zenodo.*) an additional label-based SPARQL
         lookup is performed when all identifier checks fail.  Zenodo assigns a
@@ -118,18 +131,23 @@ class KGClient:
         is not initialised in the current process).
         """
         if record.arxiv_id:
+            # A preprint is matched only on identifiers that belong to the
+            # preprint: its arXiv ID and its arXiv DOI. The publisher DOI and
+            # the OpenAlex ID (OpenAlex often describes the published article)
+            # identify the published item, so they are never used here.
             own_ids = [(M.P_ARXIV_ID, record.arxiv_id)]
             exclude = (M.P_ZBMATH_ID, M.P_ZBMATH_DE_NUMBER)
+            shared_ids = [(M.P_DOI, paper_doi(record))]
         else:
             own_ids = [
                 (M.P_ZBMATH_ID, getattr(record, "zbmath_id", "")),
                 (M.P_ZBMATH_DE_NUMBER, getattr(record, "zbmath_de_number", "")),
             ]
             exclude = (M.P_ARXIV_ID,)
-        shared_ids = [
-            (M.P_DOI, normalize_doi(record.doi)),
-            (M.P_OPENALEX_ID, getattr(record, "openalex_id", "")),
-        ]
+            shared_ids = [
+                (M.P_DOI, paper_doi(record)),
+                (M.P_OPENALEX_ID, getattr(record, "openalex_id", "")),
+            ]
         for prop, value in own_ids:
             if value:
                 qid = self._sparql_find_by_value(prop, value)
@@ -349,7 +367,7 @@ LIMIT 1
             item.add_claim(M.P_ZBMATH_ID, value=record.zbmath_id)
         if getattr(record, "zbmath_de_number", "") and not is_arxiv_item:
             item.add_claim(M.P_ZBMATH_DE_NUMBER, value=record.zbmath_de_number)
-        doi = normalize_doi(record.doi)
+        doi = paper_doi(record)
         existing_dois = {normalize_doi(d) for d in item.get_value(M.P_DOI) or []}
         if doi and doi not in existing_dois:
             item.add_claim(M.P_DOI, value=doi)
@@ -361,9 +379,11 @@ LIMIT 1
             item.add_claim(M.P_ARXIV_CLASSIFICATION, value=cat)
         for code in getattr(record, "msc_codes", None) or []:
             item.add_claim(M.P_MSC_ID, value=code)
+        zbmath_codes = dict(getattr(record, "zbmath_author_ids", None) or [])
         for name in record.authors:
-            item.add_claim(M.P_AUTHOR_NAME_STRING, value=name)
-            author_qid = self.author_resolver.resolve(name) if self.author_resolver else None
+            # Name strings are stored as "First Last" (zbMATH gives "Last, First").
+            item.add_claim(M.P_AUTHOR_NAME_STRING, value=normalize_author_name(name))
+            author_qid = self._resolve_author(name, zbmath_codes.get(name))
             if author_qid and author_qid not in existing_author_qids:
                 qual = Qualifiers()
                 qual.add(WBItem(prop_nr=M.P_GENERATED_BY, value=M.Q_WORKFLOW))
@@ -398,6 +418,19 @@ LIMIT 1
                 item.add_claim(M.P_PUBLISHED_IN, value=journal_qid)
 
         return item.write().id
+
+    def _resolve_author(self, name: str, zbmath_author_id: str | None = None) -> str | None:
+        """QID of the person item for an author, or None.
+
+        A zbMATH author ID (P676) is an identifier, so a match on it is used
+        first. Otherwise the resolver matches by name, and accepts only an
+        item that is a human whose label equals the name.
+        """
+        if zbmath_author_id:
+            qid = self._sparql_find_by_value(M.P_ZBMATH_AUTHOR_ID, zbmath_author_id)
+            if qid:
+                return qid
+        return self.author_resolver.resolve(name) if self.author_resolver else None
 
     @staticmethod
     def _add_tldr_claim(item, tldr: str, tldr_model_qid: str | None) -> None:
@@ -438,7 +471,7 @@ LIMIT 1
         is_zbmath_item = bool(claims.get(M.P_ZBMATH_ID) or claims.get(M.P_ZBMATH_DE_NUMBER))
         candidate_ids = [
             (M.P_ARXIV_ID, "" if is_zbmath_item else record.arxiv_id or ""),
-            (M.P_DOI, normalize_doi(record.doi)),
+            (M.P_DOI, paper_doi(record)),
             (M.P_OPENALEX_ID, getattr(record, "openalex_id", "") or ""),
             (M.P_ZBMATH_ID, "" if is_arxiv_item else getattr(record, "zbmath_id", "") or ""),
         ]

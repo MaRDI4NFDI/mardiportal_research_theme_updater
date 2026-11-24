@@ -8,28 +8,38 @@ import pytest
 from topic_overviews.kg.author_resolver import AuthorResolver
 
 
-def _mock_session(search_hits: list[list[dict]], orcid_claims: dict[str, str] = {}) -> MagicMock:
-    """Build a mock requests.Session whose .get returns canned responses."""
+HUMAN = "Q57162"
+
+
+def _mock_session(
+    search_hits: list[list[dict]],
+    orcid_claims: dict[str, str] | None = None,
+    humans: set[str] | None = None,
+) -> MagicMock:
+    """Mock requests.Session: wbsearchentities returns *search_hits*, wbgetentities
+    returns claims for each QID. Items are human unless *humans* names the ones that are."""
+    orcid_claims = orcid_claims or {}
+    all_qids = {h["id"] for hits in search_hits for h in hits}
+    humans = all_qids if humans is None else humans
+    searches = iter(search_hits)
+
+    def get(url, params=None, **kwargs):
+        r = MagicMock()
+        r.raise_for_status = MagicMock()
+        if params["action"] == "wbsearchentities":
+            r.json.return_value = {"search": next(searches)}
+        else:
+            qid = params["ids"]
+            claims = {}
+            if qid in humans:
+                claims["P31"] = [{"mainsnak": {"datavalue": {"value": {"id": HUMAN}}}}]
+            if qid in orcid_claims:
+                claims["P20"] = [{"mainsnak": {"datavalue": {"type": "string", "value": orcid_claims[qid]}}}]
+            r.json.return_value = {"entities": {qid: {"claims": claims}}}
+        return r
+
     session = MagicMock()
-    responses = []
-
-    for hits in search_hits:
-        r = MagicMock()
-        r.raise_for_status = MagicMock()
-        r.json.return_value = {"search": hits}
-        responses.append(r)
-
-    for qid, orcid in orcid_claims.items():
-        r = MagicMock()
-        r.raise_for_status = MagicMock()
-        r.json.return_value = {
-            "entities": {
-                qid: {"claims": {"P20": [{"mainsnak": {"datavalue": {"type": "string", "value": orcid}}}]}}
-            }
-        }
-        responses.append(r)
-
-    session.get.side_effect = responses
+    session.get.side_effect = get
     return session
 
 
@@ -74,7 +84,37 @@ class TestAuthorResolver:
         resolver = AuthorResolver("https://example.org/api", session=session)
         assert resolver.resolve("Alice Smith") == "Q123"
         assert resolver.resolve("Alice Smith") == "Q123"
-        assert session.get.call_count == 1  # only one HTTP call despite two resolves
+        assert session.get.call_count == 2  # search + claims once, despite two resolves
+
+    def test_single_hit_that_is_not_human_is_rejected(self):
+        session = _mock_session([[_hit("Q9", "Alice Smith")]], humans=set())
+        resolver = AuthorResolver("https://example.org/api", session=session)
+        assert resolver.resolve("Alice Smith") is None
+
+    def test_single_hit_with_different_label_is_rejected(self):
+        # wbsearchentities also returns prefix/alias matches such as "Alice Smithson".
+        session = _mock_session([[_hit("Q9", "Alice Smithson")]])
+        resolver = AuthorResolver("https://example.org/api", session=session)
+        assert resolver.resolve("Alice Smith") is None
+
+    def test_label_match_ignores_case_and_spacing(self):
+        session = _mock_session([[_hit("Q9", "alice  SMITH")]])
+        resolver = AuthorResolver("https://example.org/api", session=session)
+        assert resolver.resolve("Alice Smith") == "Q9"
+
+    def test_last_first_name_is_searched_as_first_last(self):
+        session = _mock_session([[_hit("Q9", "Jane Doe")]])
+        resolver = AuthorResolver("https://example.org/api", session=session)
+        assert resolver.resolve("Doe, Jane") == "Q9"
+        assert session.get.call_args_list[0].kwargs["params"]["search"] == "Jane Doe"
+
+    def test_non_human_namesake_is_ignored_among_several_hits(self):
+        # A company/software item with the same label does not make the name ambiguous.
+        session = _mock_session(
+            [[_hit("Q1", "Alice Smith"), _hit("Q2", "Alice Smith")]], humans={"Q2"},
+        )
+        resolver = AuthorResolver("https://example.org/api", session=session)
+        assert resolver.resolve("Alice Smith") == "Q2"
 
     def test_kg_search_exception_returns_none(self):
         session = MagicMock()
@@ -111,3 +151,11 @@ class TestAuthorResolver:
         resolver = AuthorResolver("https://example.org/api")
         with patch("requests.get", side_effect=Exception("timeout")):
             assert resolver._openalex_orcid("Anyone") is None
+
+
+def test_normalize_author_name():
+    from topic_overviews.kg.author_resolver import normalize_author_name
+    assert normalize_author_name("Doe, Jane") == "Jane Doe"
+    assert normalize_author_name("van der Berg, Anna Maria") == "Anna Maria van der Berg"
+    assert normalize_author_name("Jane Doe") == "Jane Doe"
+    assert normalize_author_name("Aristotle,") == "Aristotle"
